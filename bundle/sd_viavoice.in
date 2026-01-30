@@ -1,0 +1,18 @@
+#!/bin/bash
+#
+# ViaVoice Speech Dispatcher Module Wrapper
+# Runs the module with bundled libraries and ViaVoice runtime
+#
+
+# Find our install directory
+BASE="$(dirname "$(readlink -f "$0")")"
+
+# Set up environment for ViaVoice
+# ECIINI points to the generated eci.ini
+export ECIINI="$BASE/usr/lib/ViaVoiceTTS/eci.ini"
+
+# All libraries are in /usr/lib
+export LD_LIBRARY_PATH="$BASE/usr/lib"
+
+# Use bundled dynamic linker for complete isolation
+exec "$BASE/usr/lib/ld-linux.so.2" "$BASE/usr/bin/sd_viavoice.bin" "$@"

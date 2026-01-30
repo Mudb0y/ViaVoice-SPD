@@ -1,0 +1,19 @@
+# Build artifacts
+build/
+dist/
+*.o
+*.bin
+
+# Downloaded dependencies (not committed)
+deps/
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
