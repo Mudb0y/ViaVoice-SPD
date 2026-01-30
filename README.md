@@ -6,6 +6,10 @@ A speech-dispatcher module for IBM ViaVoice TTS 5.1, packaged as a fully self-co
 
 **Works on any Linux distro. No dependencies required.**
 
+## Warning!
+
+Currently some of the build scripts are broken. I am aware of this issue and will debug and fix it in the future, hang tight.
+
 ## Disclaimer
 
 This project is vibe-coded. If you don't like that, than this definitely isn't for you.
