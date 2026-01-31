@@ -161,43 +161,29 @@ for pkg in "${!DEB_PACKAGES[@]}"; do
     fi
 done
 
-# Collect runtime libs into viavoice rootfs (all in /usr/lib)
+# Copy all files from debian packages to viavoice rootfs
 step "Installing runtime libraries to rootfs..."
 
-mkdir -p "$VIAVOICE_ROOT/usr/lib"
-
-# Core libs - all go to /usr/lib
-for lib in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 ld-linux.so.2; do
-    found=$(find "$DEPS_DIR/debs" -name "$lib" -type f 2>/dev/null | head -1)
-    if [[ -n "$found" ]]; then
-        cp "$found" "$VIAVOICE_ROOT/usr/lib/"
-        info "  $lib"
-    else
-        # Try system libs as fallback
-        sys_lib=$(find /lib/i386-linux-gnu /lib32 -name "$lib" 2>/dev/null | head -1)
-        if [[ -n "$sys_lib" ]]; then
-            cp "$sys_lib" "$VIAVOICE_ROOT/usr/lib/"
-            warn "  $lib (from system)"
-        fi
+for pkg in "${!DEB_PACKAGES[@]}"; do
+    extract_dir="$DEPS_DIR/debs/${pkg}_extract"
+    if [[ -d "$extract_dir" ]]; then
+        for src_dir in "$extract_dir"/*; do
+            if [[ -d "$src_dir" ]]; then
+                dir_name=$(basename "$src_dir")
+                cp -a --no-clobber "$src_dir"/. "$VIAVOICE_ROOT/$dir_name/" 2>/dev/null || \
+                    cp -a "$src_dir"/. "$VIAVOICE_ROOT/$dir_name/" 2>/dev/null || true
+            fi
+        done
+        # Show what was copied
+        file_count=$(find "$extract_dir" -type f ! -name "*.tar*" ! -name "control" ! -name "debian-binary" | wc -l)
+        info "  Copied $file_count files from $pkg"
     fi
 done
 
-# libgcc_s
-found=$(find "$DEPS_DIR/debs" -name "libgcc_s.so.1" -type f 2>/dev/null | head -1)
-if [[ -n "$found" ]]; then
-    cp "$found" "$VIAVOICE_ROOT/usr/lib/"
-    info "  libgcc_s.so.1"
-fi
-
-# Ancient libstdc++ - ViaVoice needs this specific version
-found=$(find "$DEPS_DIR/debs" -name "libstdc++-*" -type f 2>/dev/null | head -1)
-if [[ -n "$found" ]]; then
-    cp "$found" "$VIAVOICE_ROOT/usr/lib/"
-    # Create symlink with expected name
-    base=$(basename "$found")
-    ln -sf "$base" "$VIAVOICE_ROOT/usr/lib/libstdc++-libc6.1-1.so.2" 2>/dev/null || \
-        cp "$found" "$VIAVOICE_ROOT/usr/lib/libstdc++-libc6.1-1.so.2"
-    info "  libstdc++ (ancient)"
+# Create expected symlink for ancient libstdc++ if needed
+if [[ -f "$VIAVOICE_ROOT/usr/lib/libstdc++-libc6.2-2.so.3" ]]; then
+    ln -sf "libstdc++-libc6.2-2.so.3" "$VIAVOICE_ROOT/usr/lib/libstdc++-libc6.1-1.so.2" 2>/dev/null || true
+    info "  Created libstdc++ compatibility symlink"
 fi
 
 # -----------------------------------------------------------------------------

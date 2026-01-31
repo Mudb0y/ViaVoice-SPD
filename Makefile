@@ -10,15 +10,18 @@ SRCDIR = src
 # Build directory
 BUILDDIR = build
 
-# ViaVoice library (expected in deps/viavoice/lib after running build-bundle.sh)
+# ViaVoice library paths (populated by build-bundle.sh)
 VIAVOICE_LIB = deps/viavoice/lib
+VIAVOICE_ROOT_LIB = deps/viavoice-root/usr/lib
 VIAVOICE_LIBS = -l:libibmeci50.so
 
 # Include paths
 INCLUDES = -I$(SRCDIR) -I/usr/include/speech-dispatcher
 
-# Libraries
+# Libraries - search both viavoice/lib and viavoice-root/usr/lib for dependencies
 LIBS = -L$(VIAVOICE_LIB) \
+       -L$(VIAVOICE_ROOT_LIB) \
+       -Wl,-rpath-link,$(VIAVOICE_ROOT_LIB) \
        -Wl,-rpath,'$$ORIGIN/../lib' \
        $(VIAVOICE_LIBS) \
        -lpthread
