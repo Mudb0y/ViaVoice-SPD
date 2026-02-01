@@ -125,15 +125,7 @@ fi
 if [[ ! -f "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/bin/inigen" ]]; then
     error "RTK extraction failed - inigen not found"
 fi
-
 info "ViaVoice extracted successfully"
-info "  RTK: libibmeci50.so, enu50.so, inigen"
-info "  SDK: eci.h, samples, tools"
-
-# Show the full ViaVoice structure
-echo ""
-info "ViaVoice rootfs structure:"
-find "$VIAVOICE_ROOT" -type f | sed "s|$VIAVOICE_ROOT||" | sort | head -30
 
 # -----------------------------------------------------------------------------
 # Step 3: Download Debian 32-bit runtime libraries
@@ -291,18 +283,11 @@ tar -czvf viavoice-tts-bundle.tar.gz viavoice-bundle/
 
 TARBALL="$ROOT_DIR/dist/viavoice-tts-bundle.tar.gz"
 info "Bundle created: $TARBALL"
-ls -lh "$TARBALL"
 
 echo ""
 echo "========================================"
 echo "  Build Complete!"
 echo "========================================"
-echo ""
-echo "Bundle contents:"
-find "$BUNDLE_DIR" -type f | wc -l
-echo " files"
-echo ""
-echo "Output: $TARBALL"
 echo ""
 
 # Cleanup temp files
