@@ -4,11 +4,13 @@
 #
 # This script:
 # 1. Downloads ViaVoice RTK and SDK from archive.org
-# 2. Extracts the RPMs and installs to a mini rootfs
-# 3. Downloads required 32-bit runtime libraries from Debian archives
+# 2. Extracts the RPMs
+# 3. Downloads ancient libstdc++ that ViaVoice needs
 # 4. Builds the speech-dispatcher module
-# 5. Uses inigen to generate eci.ini
-# 6. Packages everything into a self-contained bundle
+# 5. Packages everything into a self-contained bundle
+#
+# NOTE: We do NOT bundle system libs (libc, pthread, etc.) - only ViaVoice-specific libs.
+# The module binary uses the target system's libc for compatibility.
 #
 
 set -e
@@ -39,12 +41,8 @@ VIAVOICE_BASE_URL="https://archive.org/download/mandrake-7.2-power-pack/Mandrake
 VIAVOICE_RTK_URL="${VIAVOICE_BASE_URL}/viavoice_tts_rtk_5.tar"
 VIAVOICE_SDK_URL="${VIAVOICE_BASE_URL}/viavoice_tts_sdk_5.tar"
 
-# Debian packages for 32-bit runtime
-declare -A DEB_PACKAGES=(
-    ["libc6"]="http://ftp.debian.org/debian/pool/main/g/glibc/libc6_2.31-13+deb11u11_i386.deb"
-    ["libgcc-s1"]="http://ftp.debian.org/debian/pool/main/g/gcc-10/libgcc-s1_10.2.1-6_i386.deb"
-    ["libstdc++2.10"]="http://archive.debian.org/debian/pool/main/g/gcc-2.95/libstdc++2.10-glibc2.2_2.95.4-27_i386.deb"
-)
+# download ancient libstdc++ - ViaVoice needs this, modern systems don't have it
+LIBSTDCPP_URL="http://archive.debian.org/debian/pool/main/g/gcc-2.95/libstdc++2.10-glibc2.2_2.95.4-27_i386.deb"
 
 cd "$ROOT_DIR"
 
@@ -58,7 +56,7 @@ echo ""
 mkdir -p "$DEPS_DIR"/{downloads,debs}
 mkdir -p "$VIAVOICE_ROOT"
 mkdir -p "$BUILD_DIR"
-mkdir -p "$BUNDLE_DIR"/{usr/bin,etc,share}
+mkdir -p "$BUNDLE_DIR"/{usr/bin,usr/lib,etc,share}
 
 # -----------------------------------------------------------------------------
 # Step 1: Download ViaVoice RTK and SDK
@@ -83,7 +81,7 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Step 2: Extract ViaVoice RTK and SDK to mini rootfs
+# Step 2: Extract ViaVoice RTK and SDK
 # -----------------------------------------------------------------------------
 step "Extracting ViaVoice packages..."
 
@@ -127,86 +125,40 @@ if [[ ! -f "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/bin/inigen" ]]; then
 fi
 
 info "ViaVoice extracted successfully"
-
-# Show the full ViaVoice structure
-echo ""
-info "ViaVoice rootfs structure:"
-find "$VIAVOICE_ROOT" -type f | sed "s|$VIAVOICE_ROOT||" | sort | head -30
+info "  Core libs: libibmeci50.so, enu50.so"
+info "  Tools: inigen"
 
 # -----------------------------------------------------------------------------
-# Step 3: Download Debian 32-bit runtime libraries
+# Step 3: Download ancient libstdc++ for ViaVoice compatibility
 # -----------------------------------------------------------------------------
-step "Downloading 32-bit runtime libraries..."
+step "Downloading ancient libstdc++ (required by ViaVoice)..."
 
-for pkg in "${!DEB_PACKAGES[@]}"; do
-    url="${DEB_PACKAGES[$pkg]}"
-    deb_file="$DEPS_DIR/debs/${pkg}.deb"
-    
-    if [[ ! -f "$deb_file" ]]; then
-        info "Downloading $pkg..."
-        curl -L -o "$deb_file" "$url" || warn "Failed to download $pkg"
-    else
-        info "Using cached $pkg"
-    fi
-    
-    # Extract the deb
-    if [[ -f "$deb_file" ]]; then
-        mkdir -p "$DEPS_DIR/debs/${pkg}_extract"
-        cd "$DEPS_DIR/debs/${pkg}_extract"
-        ar x "$deb_file" 2>/dev/null || true
-        tar -xf data.tar.* 2>/dev/null || tar -xf data.tar 2>/dev/null || true
-        cd "$ROOT_DIR"
-    fi
-done
-
-# Copy all files from debian packages to viavoice rootfs
-step "Installing runtime libraries to rootfs..."
-
-mkdir -p "$VIAVOICE_ROOT/usr/lib"
-
-for pkg in "${!DEB_PACKAGES[@]}"; do
-    extract_dir="$DEPS_DIR/debs/${pkg}_extract"
-    if [[ -d "$extract_dir" ]]; then
-        
-        find "$extract_dir" -type f \( -name "*.so" -o -name "*.so.*" \) | while read -r lib; do
-            cp -a "$lib" "$VIAVOICE_ROOT/usr/lib/" 2>/dev/null || true
-            info "    $(basename "$lib")"
-        done
-        
-        find "$extract_dir" -type l \( -name "*.so" -o -name "*.so.*" -o -name "ld-*.so*" \) | while read -r link; do
-            cp -a "$link" "$VIAVOICE_ROOT/usr/lib/" 2>/dev/null || true
-        done
-        
-        found_ld=$(find "$extract_dir" -name "ld-linux.so.2" -o -name "ld-linux*.so*" 2>/dev/null)
-        for ld in $found_ld; do
-            cp -a "$ld" "$VIAVOICE_ROOT/usr/lib/" 2>/dev/null || true
-            info "    $(basename "$ld")"
-        done
-    fi
-done
-
-# Fix ld-linux.so.2 symlink (may be broken due to deb directory structure)
-# The deb has /lib/ld-linux.so.2 -> i386-linux-gnu/ld-2.31.so which breaks when copied flat
-ld_real=$(find "$VIAVOICE_ROOT/usr/lib" -name "ld-*.so" -type f 2>/dev/null | head -1)
-if [[ -n "$ld_real" ]]; then
-    ln -sf "$(basename "$ld_real")" "$VIAVOICE_ROOT/usr/lib/ld-linux.so.2"
-    info "Fixed ld-linux.so.2 symlink -> $(basename "$ld_real")"
-fi
-
-# Create expected symlink for ancient libstdc++ if needed
-# ViaVoice binaries need libstdc++-libc6.1-1.so.2 but we have libstdc++-3-libc6.2-2-2.10.0.so
-# These are ABI-compatible, so we create a symlink
-found_stdcpp=$(find "$VIAVOICE_ROOT/usr/lib" -name "libstdc++-3-*.so" -type f 2>/dev/null | head -1)
-if [[ -z "$found_stdcpp" ]]; then
-    # Fallback: look for any libstdc++ file
-    found_stdcpp=$(find "$VIAVOICE_ROOT/usr/lib" -name "libstdc++*.so*" -type f 2>/dev/null | head -1)
-fi
-if [[ -n "$found_stdcpp" ]]; then
-    base=$(basename "$found_stdcpp")
-    ln -sf "$base" "$VIAVOICE_ROOT/usr/lib/libstdc++-libc6.1-1.so.2"
-    info "Created libstdc++ compatibility symlink: libstdc++-libc6.1-1.so.2 -> $base"
+LIBSTDCPP_DEB="$DEPS_DIR/debs/libstdc++2.10.deb"
+if [[ ! -f "$LIBSTDCPP_DEB" ]]; then
+    info "Downloading libstdc++2.10..."
+    curl -L -o "$LIBSTDCPP_DEB" "$LIBSTDCPP_URL" || error "Failed to download libstdc++2.10"
 else
-    warn "Could not find libstdc++ library for compatibility symlink"
+    info "Using cached libstdc++2.10"
+fi
+
+# Extract
+mkdir -p "$DEPS_DIR/debs/libstdc++_extract"
+cd "$DEPS_DIR/debs/libstdc++_extract"
+ar x "$LIBSTDCPP_DEB" 2>/dev/null || true
+tar -xf data.tar.* 2>/dev/null || tar -xf data.tar 2>/dev/null || true
+cd "$ROOT_DIR"
+
+# Find and copy the libstdc++ library
+found_stdcpp=$(find "$DEPS_DIR/debs/libstdc++_extract" -name "libstdc++-3-*.so" -type f 2>/dev/null | head -1)
+if [[ -n "$found_stdcpp" ]]; then
+    cp "$found_stdcpp" "$VIAVOICE_ROOT/usr/lib/"
+    base=$(basename "$found_stdcpp")
+    # Create the symlink ViaVoice expects
+    ln -sf "$base" "$VIAVOICE_ROOT/usr/lib/libstdc++-libc6.1-1.so.2"
+    info "Installed $base"
+    info "Created symlink: libstdc++-libc6.1-1.so.2 -> $base"
+else
+    error "Could not find libstdc++ in downloaded package"
 fi
 
 # -----------------------------------------------------------------------------
@@ -231,41 +183,35 @@ make || error "Build failed"
 info "Build successful"
 
 # -----------------------------------------------------------------------------
-# Step 5: Generate eci.ini using inigen
-# -----------------------------------------------------------------------------
-step "Generating eci.ini with inigen..."
-
-# inigen needs to run with the ViaVoice libs available
-cd "$VIAVOICE_ROOT"
-export LD_LIBRARY_PATH="$VIAVOICE_ROOT/usr/lib"
-
-# Run inigen using the bundled ld-linux.so.2 to avoid system library paths
-# This ensures we use ONLY bundled libs, not /usr/lib on the host
-"$VIAVOICE_ROOT/usr/lib/ld-linux.so.2" --library-path "$VIAVOICE_ROOT/usr/lib" \
-    "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/bin/inigen" "$VIAVOICE_ROOT/usr/lib/enu50.so"
-
-if [[ ! -f "$VIAVOICE_ROOT/eci.ini" ]]; then
-    error "inigen failed to create eci.ini"
-fi
-
-# Move eci.ini to proper location
-mkdir -p "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS"
-mv "$VIAVOICE_ROOT/eci.ini" "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/"
-
-info "eci.ini generated successfully"
-
-cd "$ROOT_DIR"
-
-# -----------------------------------------------------------------------------
-# Step 6: Assemble the bundle
+# Step 5: Assemble the bundle
 # -----------------------------------------------------------------------------
 step "Assembling bundle..."
 
-# Copy our module
+# Copy our module binary
 cp "$BUILD_DIR/sd_viavoice.bin" "$BUNDLE_DIR/usr/bin/"
 
-# Copy the entire ViaVoice rootfs (everything is in /usr)
-cp -r "$VIAVOICE_ROOT/usr" "$BUNDLE_DIR/"
+# Copy ONLY ViaVoice-specific libraries (not system libs!)
+# These are the libs that won't exist on modern systems:
+cp "$VIAVOICE_ROOT/usr/lib/libibmeci50.so" "$BUNDLE_DIR/usr/lib/"
+cp "$VIAVOICE_ROOT/usr/lib/enu50.so" "$BUNDLE_DIR/usr/lib/"
+cp "$VIAVOICE_ROOT/usr/lib/libstdc++-3-libc6.2-2-2.10.0.so" "$BUNDLE_DIR/usr/lib/" 2>/dev/null || true
+cp -a "$VIAVOICE_ROOT/usr/lib/libstdc++-libc6.1-1.so.2" "$BUNDLE_DIR/usr/lib/"
+
+# Copy ViaVoice tools and data
+mkdir -p "$BUNDLE_DIR/usr/lib/ViaVoiceTTS"
+cp -r "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/bin" "$BUNDLE_DIR/usr/lib/ViaVoiceTTS/"
+cp -r "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/samples" "$BUNDLE_DIR/usr/lib/ViaVoiceTTS/" 2>/dev/null || true
+
+# Copy documentation
+if [[ -d "$VIAVOICE_ROOT/usr/doc" ]]; then
+    cp -r "$VIAVOICE_ROOT/usr/doc" "$BUNDLE_DIR/usr/"
+fi
+
+# Copy header file (for potential development)
+if [[ -f "$VIAVOICE_ROOT/usr/include/eci.h" ]]; then
+    mkdir -p "$BUNDLE_DIR/usr/include"
+    cp "$VIAVOICE_ROOT/usr/include/eci.h" "$BUNDLE_DIR/usr/include/"
+fi
 
 # Copy our config and scripts
 cp "$ROOT_DIR/config/viavoice.conf" "$BUNDLE_DIR/etc/"
@@ -274,16 +220,32 @@ cp "$ROOT_DIR/bundle/uninstall.sh" "$BUNDLE_DIR/"
 cp "$ROOT_DIR/bundle/sd_viavoice.in" "$BUNDLE_DIR/sd_viavoice"
 cp "$ROOT_DIR/README.md" "$BUNDLE_DIR/" 2>/dev/null || true
 
+# Create a placeholder eci.ini that install.sh will regenerate
+# This is necessary because eci.ini contains absolute paths
+cat > "$BUNDLE_DIR/usr/lib/ViaVoiceTTS/eci.ini" << 'ECIEOF'
+[1.0]
+Path=@VIAVOICE_LIB@/enu50.so
+Version=5.0
+Voice1=0 50 65 30 0 0 50 92
+Voice2=1 50 81 30 0 50 50 95
+Voice3=1 22 93 35 0 0 50 95
+Voice7=1 45 68 30 3 40 50 90
+Voice8=0 30 61 44 18 20 50 89
+Voice4=0 89 52 43 0 0 50 93
+Voice5=0 50 69 34 0 0 70 92
+Voice6=1 56 89 35 0 40 70 95
+ECIEOF
+info "Created placeholder eci.ini (install.sh will fix paths)"
+
 # Set permissions
 chmod +x "$BUNDLE_DIR/install.sh"
 chmod +x "$BUNDLE_DIR/uninstall.sh"
 chmod +x "$BUNDLE_DIR/sd_viavoice"
 chmod +x "$BUNDLE_DIR/usr/bin/sd_viavoice.bin"
-chmod +x "$BUNDLE_DIR/usr/lib/ld-linux.so.2"
 chmod +x "$BUNDLE_DIR/usr/lib/ViaVoiceTTS/bin/"* 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
-# Step 7: Create tarball
+# Step 6: Create tarball
 # -----------------------------------------------------------------------------
 step "Creating distribution tarball..."
 
