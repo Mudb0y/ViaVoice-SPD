@@ -1,19 +1,23 @@
 #!/bin/bash
 #
 # ViaVoice Speech Dispatcher Module Wrapper
-# Runs the module with bundled libraries and ViaVoice runtime
+#
+# This wrapper sets up the environment for ViaVoice TTS and runs the module.
+# It uses LD_LIBRARY_PATH to find ViaVoice libs while letting the system
+# provide standard libs (libc, pthread, etc.) for compatibility.
 #
 
-# Find our install directory
+# Find our install directory (resolve symlinks)
 BASE="$(dirname "$(readlink -f "$0")")"
 
 # Set up environment for ViaVoice
-# ECIINI points to the generated eci.ini
+# ECIINI tells ViaVoice where to find the voice configuration
 export ECIINI="$BASE/usr/lib/ViaVoiceTTS/eci.ini"
 
-# Set ECIINI for ViaVoice (already exported above)
-# LD_LIBRARY_PATH not needed - we use --library-path for complete isolation
+# Add our lib directory to library path
+# ViaVoice-specific libs (libibmeci50.so, libstdc++-libc6.1-1.so.2) live here
+# System libs (libc, pthread, etc.) come from the system for compatibility
+export LD_LIBRARY_PATH="$BASE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-# Use bundled dynamic linker with explicit library path for complete isolation
-# This ensures we NEVER use system /usr/lib libraries
-exec "$BASE/usr/lib/ld-linux.so.2" --library-path "$BASE/usr/lib" "$BASE/usr/bin/sd_viavoice.bin" "$@"
+# Run the module
+exec "$BASE/usr/bin/sd_viavoice.bin" "$@"
