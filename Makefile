@@ -12,16 +12,17 @@ BUILDDIR = build
 
 # ViaVoice library paths (populated by build-bundle.sh)
 VIAVOICE_LIB = deps/viavoice/lib
-VIAVOICE_ROOT_LIB = deps/viavoice-root/usr/lib
 VIAVOICE_LIBS = -l:libibmeci50.so
 
 # Include paths
 INCLUDES = -I$(SRCDIR) -I/usr/include/speech-dispatcher
 
-# Libraries - search both viavoice/lib and viavoice-root/usr/lib for dependencies
+# Libraries - ONLY link against ViaVoice lib, use system's 32-bit pthread/libc
+# The bundled Debian libs are for runtime only, not link time
+# --allow-shlib-undefined: ViaVoice needs ancient libstdc++ which isn't on the
+# build host - these symbols will be resolved at runtime via LD_LIBRARY_PATH
 LIBS = -L$(VIAVOICE_LIB) \
-       -L$(VIAVOICE_ROOT_LIB) \
-       -Wl,-rpath-link,$(VIAVOICE_ROOT_LIB) \
+       -Wl,--allow-shlib-undefined \
        -Wl,-rpath,'$$ORIGIN/../lib' \
        $(VIAVOICE_LIBS) \
        -lpthread
