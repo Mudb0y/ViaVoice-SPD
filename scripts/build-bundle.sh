@@ -191,6 +191,14 @@ for pkg in "${!DEB_PACKAGES[@]}"; do
     fi
 done
 
+# Fix ld-linux.so.2 symlink (may be broken due to deb directory structure)
+# The deb has /lib/ld-linux.so.2 -> i386-linux-gnu/ld-2.31.so which breaks when copied flat
+ld_real=$(find "$VIAVOICE_ROOT/usr/lib" -name "ld-*.so" -type f 2>/dev/null | head -1)
+if [[ -n "$ld_real" ]]; then
+    ln -sf "$(basename "$ld_real")" "$VIAVOICE_ROOT/usr/lib/ld-linux.so.2"
+    info "Fixed ld-linux.so.2 symlink -> $(basename "$ld_real")"
+fi
+
 # Create expected symlink for ancient libstdc++ if needed
 found_stdcpp=$(find "$VIAVOICE_ROOT/usr/lib" -name "libstdc++*.so.*" -type f 2>/dev/null | head -1)
 if [[ -n "$found_stdcpp" ]]; then
