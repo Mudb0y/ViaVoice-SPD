@@ -11,8 +11,9 @@ BASE="$(dirname "$(readlink -f "$0")")"
 # ECIINI points to the generated eci.ini
 export ECIINI="$BASE/usr/lib/ViaVoiceTTS/eci.ini"
 
-# All libraries are in /usr/lib
-export LD_LIBRARY_PATH="$BASE/usr/lib"
+# Set ECIINI for ViaVoice (already exported above)
+# LD_LIBRARY_PATH not needed - we use --library-path for complete isolation
 
-# Use bundled dynamic linker for complete isolation
-exec "$BASE/usr/lib/ld-linux.so.2" "$BASE/usr/bin/sd_viavoice.bin" "$@"
+# Use bundled dynamic linker with explicit library path for complete isolation
+# This ensures we NEVER use system /usr/lib libraries
+exec "$BASE/usr/lib/ld-linux.so.2" --library-path "$BASE/usr/lib" "$BASE/usr/bin/sd_viavoice.bin" "$@"

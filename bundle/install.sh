@@ -115,12 +115,11 @@ ECI_INI="$INSTALL_PATH/usr/lib/ViaVoiceTTS/eci.ini"
 
 if [[ -x "$INIGEN" ]] && [[ -f "$ENU_LIB" ]]; then
     cd "$INSTALL_PATH/usr/lib/ViaVoiceTTS"
-    export LD_LIBRARY_PATH="$INSTALL_PATH/usr/lib"
     
-    if "$INIGEN" "$ENU_LIB" 2>/dev/null; then
+    # Always use bundled ld-linux.so.2 to avoid system library paths
+    # This ensures we use ONLY bundled libs, not /usr/lib on the host
+    if "$INSTALL_PATH/usr/lib/ld-linux.so.2" --library-path "$INSTALL_PATH/usr/lib" "$INIGEN" "$ENU_LIB" 2>/dev/null; then
         success "eci.ini generated with inigen"
-    elif "$INSTALL_PATH/usr/lib/ld-linux.so.2" --library-path "$LD_LIBRARY_PATH" "$INIGEN" "$ENU_LIB" 2>/dev/null; then
-        success "eci.ini generated with inigen (via bundled linker)"
     else
         warn "inigen failed, using existing eci.ini"
         if [[ -f "$ECI_INI" ]]; then
