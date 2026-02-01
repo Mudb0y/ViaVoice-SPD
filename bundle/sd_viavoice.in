@@ -16,7 +16,6 @@ export ECIINI="$BASE/usr/lib/ViaVoiceTTS/eci.ini"
 
 # Add our lib directory to library path
 # ViaVoice-specific libs (libibmeci50.so, libstdc++-libc6.1-1.so.2) live here
-# System libs (libc, pthread, etc.) come from the system for compatibility
 export LD_LIBRARY_PATH="$BASE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # Run the module
