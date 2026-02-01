@@ -188,7 +188,9 @@ for pkg in "${!DEB_PACKAGES[@]}"; do
             cp -a "$ld" "$VIAVOICE_ROOT/usr/lib/" 2>/dev/null || true
             info "    $(basename "$ld")"
         done
-        
+    fi
+done
+
 # Create expected symlink for ancient libstdc++ if needed
 found_stdcpp=$(find "$VIAVOICE_ROOT/usr/lib" -name "libstdc++*.so.*" -type f 2>/dev/null | head -1)
 if [[ -n "$found_stdcpp" ]]; then
