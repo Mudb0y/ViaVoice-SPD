@@ -125,7 +125,13 @@ fi
 if [[ ! -f "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/bin/inigen" ]]; then
     error "RTK extraction failed - inigen not found"
 fi
+
 info "ViaVoice extracted successfully"
+
+# Show the full ViaVoice structure
+echo ""
+info "ViaVoice rootfs structure:"
+find "$VIAVOICE_ROOT" -type f | sed "s|$VIAVOICE_ROOT||" | sort | head -30
 
 # -----------------------------------------------------------------------------
 # Step 3: Download Debian 32-bit runtime libraries
@@ -162,19 +168,15 @@ for pkg in "${!DEB_PACKAGES[@]}"; do
     extract_dir="$DEPS_DIR/debs/${pkg}_extract"
     if [[ -d "$extract_dir" ]]; then
         
-        # Copy all shared libraries (.so files) to /usr/lib/ (flat)
-        # This handles libs from /lib/, /usr/lib/, /lib/i386-linux-gnu/, etc.
         find "$extract_dir" -type f \( -name "*.so" -o -name "*.so.*" \) | while read -r lib; do
             cp -a "$lib" "$VIAVOICE_ROOT/usr/lib/" 2>/dev/null || true
             info "    $(basename "$lib")"
         done
         
-        # Also copy symlinks to shared libraries
         find "$extract_dir" -type l \( -name "*.so" -o -name "*.so.*" -o -name "ld-*.so*" \) | while read -r link; do
             cp -a "$link" "$VIAVOICE_ROOT/usr/lib/" 2>/dev/null || true
         done
         
-        # Copy ld-linux.so.2 (the dynamic linker) - it's often a regular file or symlink
         found_ld=$(find "$extract_dir" -name "ld-linux.so.2" -o -name "ld-linux*.so*" 2>/dev/null)
         for ld in $found_ld; do
             cp -a "$ld" "$VIAVOICE_ROOT/usr/lib/" 2>/dev/null || true
@@ -192,11 +194,19 @@ if [[ -n "$ld_real" ]]; then
 fi
 
 # Create expected symlink for ancient libstdc++ if needed
-found_stdcpp=$(find "$VIAVOICE_ROOT/usr/lib" -name "libstdc++*.so.*" -type f 2>/dev/null | head -1)
+# ViaVoice binaries need libstdc++-libc6.1-1.so.2 but we have libstdc++-3-libc6.2-2-2.10.0.so
+# These are ABI-compatible, so we create a symlink
+found_stdcpp=$(find "$VIAVOICE_ROOT/usr/lib" -name "libstdc++-3-*.so" -type f 2>/dev/null | head -1)
+if [[ -z "$found_stdcpp" ]]; then
+    # Fallback: look for any libstdc++ file
+    found_stdcpp=$(find "$VIAVOICE_ROOT/usr/lib" -name "libstdc++*.so*" -type f 2>/dev/null | head -1)
+fi
 if [[ -n "$found_stdcpp" ]]; then
     base=$(basename "$found_stdcpp")
-    ln -sf "$base" "$VIAVOICE_ROOT/usr/lib/libstdc++-libc6.1-1.so.2" 2>/dev/null || true
-    info "  Created libstdc++ compatibility symlink -> $base"
+    ln -sf "$base" "$VIAVOICE_ROOT/usr/lib/libstdc++-libc6.1-1.so.2"
+    info "Created libstdc++ compatibility symlink: libstdc++-libc6.1-1.so.2 -> $base"
+else
+    warn "Could not find libstdc++ library for compatibility symlink"
 fi
 
 # -----------------------------------------------------------------------------
@@ -229,11 +239,10 @@ step "Generating eci.ini with inigen..."
 cd "$VIAVOICE_ROOT"
 export LD_LIBRARY_PATH="$VIAVOICE_ROOT/usr/lib"
 
-# Run inigen - it takes the path to enu50.so and generates eci.ini
-# We'll generate it with the final install path placeholder, then fix it
-"$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/bin/inigen" "$VIAVOICE_ROOT/usr/lib/enu50.so" 2>/dev/null || \
-    "$VIAVOICE_ROOT/usr/lib/ld-linux.so.2" --library-path "$VIAVOICE_ROOT/usr/lib" \
-        "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/bin/inigen" "$VIAVOICE_ROOT/usr/lib/enu50.so"
+# Run inigen using the bundled ld-linux.so.2 to avoid system library paths
+# This ensures we use ONLY bundled libs, not /usr/lib on the host
+"$VIAVOICE_ROOT/usr/lib/ld-linux.so.2" --library-path "$VIAVOICE_ROOT/usr/lib" \
+    "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/bin/inigen" "$VIAVOICE_ROOT/usr/lib/enu50.so"
 
 if [[ ! -f "$VIAVOICE_ROOT/eci.ini" ]]; then
     error "inigen failed to create eci.ini"
