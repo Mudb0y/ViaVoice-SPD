@@ -616,7 +616,7 @@ static char *sanitize_for_viavoice(const char *text)
                 (c >= '0' && c <= '9') ||
                 c == ' ' || c == '\t' || c == '\n' ||
                 c == '.' || c == ',' || c == '!' || c == '?' ||
-                c == '$') {
+                c == '$' || c == '\'') {
                 *dst++ = c;
                 src++;
                 continue;
