@@ -1,222 +1,196 @@
 # ViaVoice TTS for Speech-Dispatcher
 
-[![Build and Release](https://github.com/YOUR_USERNAME/viavoice-spd/actions/workflows/release.yml/badge.svg)](https://github.com/YOUR_USERNAME/viavoice-spd/actions/workflows/release.yml)
+A speech-dispatcher module for IBM ViaVoice TTS 5.1. This lets you use ViaVoice as a text-to-speech engine on modern Linux through speech-dispatcher.
 
-A speech-dispatcher module for IBM ViaVoice TTS 5.1, packaged as a fully self-contained bundle.
+ViaVoice TTS is based on the same Eloquence synthesis technology that IBM and ETI developed in the 90s. Version 5.1 was freely distributed by IBM and is now archived on archive.org. It sounds significantly more natural than eSpeak NG for extended listening.
 
-**Works on any Linux distro. No dependencies required.**
+## Install
 
-## Warning!
+Requires: speech-dispatcher, 32-bit libc support (the ViaVoice engine is a 32-bit i386 binary from 2000).
 
-Currently some of the build scripts are broken. I am aware of this issue and will debug and fix it in the future, hang tight.
-
-## Disclaimer
-
-This project is vibe-coded. If you don't like that, than this definitely isn't for you.
-
-To that end I have made certain that everything works at the very least as well as it can. I have reviewed the shell scripts used to build and install time and time again, fixing any issues that were glaringly obvious to a human but not to an AI and trying to conform to standards to the best of my ability.
-
-I don't know C however, so I haven't thoroughly reviewed the SPD module. If any of you do know C, have the time on your hands, and are willing to take a look at the code and even point out issues, I would be grateful.
-
-If, however, you use AI to contribute, claim otherwise, and I notice, your contribution goes out the window. Nothing wrong with using AI to code, but everything wrong with lieing. Don't be a meany. Our broken education system should've at least tought you that.
-
-## Why?
-
-Just because.
-
-Actually, I'm kidding. I hate how Espeak NG sounds. Some people can stand it just fine, but it drives me batshit insane, particularly while using it on headphones.
-
-My TTS of choice on platforms other than Linux is Eloquence, which IBM worked on along side ETI / Eloquent Technologies during the 90s and early 2000s. ETI seems to have stopped development around version 6.1, which is still widely in circulation amongst OEMs like Apple, Freedom Scientific, ETC, while IBM continued their own thing.
-
-IBM's last version is IBMTTS 6.7, which is available for Linux today via Voxin but has many, many issues. Some amongst them are non-toggleable phraze prediction, non-toggleable abbriviation dictionaries, and an issue inside of the library it self which causes the speech parameters like rate and volume to reset at random intervals.
-
-This is ViaVoice TTS 5.1, which while slightly older doesn't have this reset issue, and at least with Claude's SPD implementation seems to just behave much better than the Voxin module does. I have no idea if it's the librarys fault or Voxin's, so I'm not shifting blame on to anybody. I just think this works better.
-
-Plus, you can't buy Voxin today, and you can still download the ViaVoice tarballs, and you don't even have to feel bad about it since they were once freely available on IBM's website!
-
-## Quick Start
-
-Download the latest release and run:
+Download the latest release tarball, extract it, and run the installer:
 
 ```bash
 tar -xzf viavoice-tts-bundle.tar.gz
 cd viavoice-bundle
-sudo ./install.sh    # System-wide
-# or
-./install.sh         # User install (~/.local)
+
+# System-wide (installs to /opt/ViaVoiceTTS)
+sudo ./install.sh
+
+# Or user-only (installs to ~/.local/ViaVoiceTTS)
+./install.sh
+```
+
+The installer accepts `--yes` to skip the confirmation prompt and `--prefix=PATH` for a custom location.
+
+If you don't have 32-bit support installed, on Debian/Ubuntu:
+
+```bash
+sudo dpkg --add-architecture i386 && sudo apt install libc6:i386
 ```
 
 Test it:
 
 ```bash
-spd-say -o viavoice "Hello, I am ViaVoice"
+spd-say -o viavoice "Hello, this is ViaVoice."
 spd-say -o viavoice -y Flo "Hi, I'm Flo!"
-spd-say -o viavoice -L  # List voices
+spd-say -o viavoice -L   # list voices
 ```
-
-## Voices
-
-| Name | Description |
-|------|-------------|
-| Wade | Adult Male 1 (default) |
-| Flo | Adult Female 1 |
-| Bobbie | Child |
-| Male2 | Adult Male 2 |
-| Male3 | Adult Male 3 |
-| Female2 | Adult Female 2 |
-| Grandma | Elderly Female |
-| Grandpa | Elderly Male |
-
-## What's in the Bundle
-
-The bundle contains the complete ViaVoice RTK and SDK installed, plus a 32-bit runtime environment:
-
-```
-viavoice-bundle/
-├── usr/bin/
-│   └── sd_viavoice.bin             # Speech-dispatcher module
-├── usr/lib/
-│   ├── ld-linux.so.2               # Dynamic linker
-│   ├── libc.so.6, libm.so.6        # Glibc
-│   ├── libstdc++...                # Ancient C++ runtime
-│   ├── libibmeci50.so              # ViaVoice ECI engine
-│   ├── enu50.so                    # English voice data
-│   └── ViaVoiceTTS/
-│       ├── bin/
-│       │   ├── inigen              # INI generator tool
-│       │   ├── showmsg             # Message viewer
-│       │   └── vieweci             # ECI viewer
-│       ├── samples/                # SDK samples
-│       └── eci.ini                 # Generated config
-├── usr/include/
-│   └── eci.h                       # SDK header
-├── usr/doc/ViaVoiceTTS/            # Documentation
-├── etc/
-│   └── viavoice.conf               # Module config
-├── sd_viavoice                     # Wrapper script
-└── install.sh
-```
-
-The `eci.ini` file is generated at build time using IBM's `inigen` tool from the SDK.
-
-## How It Works
-
-When called by speech-dispatcher, the wrapper script:
-1. Sets `ECIINI` to point to the bundled `eci.ini`
-2. Sets `LD_LIBRARY_PATH` to the bundled libraries
-3. Invokes the bundled `ld-linux.so.2` dynamic linker
-4. Loads all libraries from the bundle—completely isolated from system libraries
-
-This means it works on any Linux distro with speech-dispatcher installed.
-
-## Building from Source
-
-### Prerequisites
-
-- GCC with 32-bit support (`gcc-multilib`)
-- speech-dispatcher development headers
-- curl, cpio (for extracting RPMs)
-
-### Build
-
-```bash
-# Install build deps (Debian/Ubuntu)
-sudo apt install gcc-multilib libc6-dev-i386 libspeechd-dev curl cpio
-
-# Build the bundle
-./scripts/build-bundle.sh
-```
-
-Output: `dist/viavoice-tts-bundle.tar.gz`
-
-### What the build script does
-
-1. Downloads ViaVoice RTK and SDK from [archive.org](https://archive.org/download/mandrake-7.2-power-pack/)
-2. Extracts the RPMs using `rpm2cpio`
-3. Installs both to a mini rootfs
-4. Downloads 32-bit runtime libraries from Debian archives
-5. Compiles the speech-dispatcher module
-6. Runs `inigen` to generate `eci.ini`
-7. Packages everything into a self-contained bundle
-
-## Configuration
-
-Edit `<install-path>/etc/viavoice.conf`:
-
-```conf
-# Sample rate (8000, 11025, 22050)
-ViaVoiceSampleRate 22050
-
-# Default voice (0-7)
-ViaVoiceDefaultVoice 0
-
-# Voice parameters
-ViaVoicePitchBaseline 65
-ViaVoiceSpeed 50
-ViaVoiceVolume 90
-
-# Text processing
-ViaVoicePhrasePrediction 1
-
-# Custom dictionaries
-ViaVoiceMainDict /path/to/main.dct
-ViaVoiceAbbrevDict /path/to/abbrev.dct
-```
-
-## ViaVoice SDK Tools
-
-The bundle includes the original IBM SDK tools:
-
-```bash
-# Generate new eci.ini
-$INSTALL_PATH/usr/lib/ViaVoiceTTS/bin/inigen /path/to/enu50.so
-
-# View ECI info
-$INSTALL_PATH/usr/lib/ViaVoiceTTS/bin/vieweci
-```
-
-Sample programs are in `usr/lib/ViaVoiceTTS/samples/`.
 
 ## Uninstall
 
 ```bash
-# From bundle directory
-./uninstall.sh
+# From the bundle directory, or from wherever you installed it
+sudo ./uninstall.sh
 
-# Or manually
-sudo rm -rf /opt/ViaVoiceTTS
-sudo rm /usr/lib/speech-dispatcher-modules/sd_viavoice
+# Or with a custom prefix
+./uninstall.sh --prefix=/path/to/install
 ```
 
-## Project Structure
+## Voices
 
+ViaVoice 5.1 ships with 8 English voices:
+
+| Voice | Name |
+|-------|------|
+| 0 | Wade (adult male, default) |
+| 1 | Flo (adult female) |
+| 2 | Bobbie (child) |
+| 3 | Male 2 |
+| 4 | Male 3 |
+| 5 | Female 2 |
+| 6 | Grandma (elderly female) |
+| 7 | Grandpa (elderly male) |
+
+Select by name: `spd-say -o viavoice -y Grandpa "Back in my day..."`
+
+## Configuration
+
+The config file lives at `<install-path>/etc/viavoice.conf` and is also copied to speech-dispatcher's module config directory during install. All settings are optional. The defaults work fine.
+
+```conf
+# Sample rate: 8000, 11025, or 22050 (default: 22050)
+ViaVoiceSampleRate 22050
+
+# Default voice (0-7, see table above)
+ViaVoiceDefaultVoice 0
+
+# Voice parameters (applied to all voices)
+ViaVoicePitchBaseline 65     # 0-100
+ViaVoicePitchFluctuation 30  # 0-100, higher = more expressive
+ViaVoiceSpeed 50             # 0-250
+ViaVoiceVolume 90            # 0-100
+ViaVoiceHeadSize 50          # 0-100, affects resonance
+ViaVoiceRoughness 0          # 0-100, voice gravel
+ViaVoiceBreathiness 0        # 0-100, airy quality
+
+# Phrase prediction (0=off, 1=on, default: off)
+ViaVoicePhrasePrediction 0
+
+# Custom dictionaries
+ViaVoiceMainDict /path/to/main.dct
+ViaVoiceRootDict /path/to/root.dct
+ViaVoiceAbbrevDict /path/to/abbrev.dct
 ```
-viavoice-spd/
-├── .github/workflows/
-│   └── release.yml           # Build & release on tag
-├── src/                      # Module source code
-│   ├── sd_viavoice.c         # Main module
-│   ├── module_*.c            # SPD framework
-│   └── *.h                   # Headers
-├── bundle/                   # Install scripts & wrapper
-│   ├── install.sh
-│   ├── uninstall.sh
-│   └── sd_viavoice.in        # Wrapper template
-├── config/
-│   └── viavoice.conf         # Default module config
-├── scripts/
-│   └── build-bundle.sh       # Downloads RTK/SDK, builds bundle
-├── Makefile
-└── README.md
+
+## Building from source
+
+Build dependencies (Debian/Ubuntu):
+
+```bash
+sudo apt install gcc-multilib libc6-dev-i386 libspeechd-dev curl rpm2cpio cpio binutils make
 ```
+
+Build:
+
+```bash
+./scripts/build-bundle.sh
+```
+
+This downloads the ViaVoice RTK/SDK from archive.org, extracts them, downloads the ancient libstdc++ that ViaVoice needs, compiles the speech-dispatcher module as a 32-bit binary, and packages everything into `dist/viavoice-tts-bundle.tar.gz`.
+
+All downloads are verified against embedded SHA256 checksums. Pass `--skip-verify` to bypass this during development.
+
+## How it works
+
+This section explains the full pipeline from speech-dispatcher to audio output.
+
+### Architecture overview
+
+Speech-dispatcher (SPD) is a server that sits between applications and TTS engines. Applications send text to SPD via the SSIP protocol. SPD processes the text (punctuation handling, SSML wrapping) and routes it to a module -- this project is one such module.
+
+SPD modules are standalone executables that communicate with the SPD server over stdin/stdout using a line-based protocol. The module receives commands like `SPEAK`, `STOP`, `SET`, and `LIST VOICES`. When SPD sends text to speak, it wraps it in SSML and escapes special characters as XML entities (`'` becomes `&apos;`, `&` becomes `&amp;`, etc.).
+
+### The wrapper script
+
+SPD launches `sd_viavoice`, which is a bash wrapper script (`bundle/sd_viavoice.in`). It resolves its own path (following symlinks), then sets up the environment:
+
+- `ECIINI` -- points to `eci.ini`, the ViaVoice voice configuration file
+- `LD_LIBRARY_PATH` -- prepends the bundle's `usr/lib/` so the linker finds `libibmeci50.so` and the ancient `libstdc++-libc6.1-1.so.2`
+- `LD_PRELOAD` -- preloads `enu50.so` (the English voice data) to work around a loading issue in ViaVoice
+
+It then `exec`s the actual binary `sd_viavoice.bin`.
+
+### The module binary
+
+`sd_viavoice.bin` is a 32-bit ELF binary compiled from `src/sd_viavoice.c` and the module framework files (`module_main.c`, `module_readline.c`, `module_process.c`). The framework handles the stdin/stdout protocol with SPD. The module code implements these callbacks:
+
+- `module_config()` -- parses the config file
+- `module_init()` -- creates an ECI instance, allocates an audio buffer, registers the audio callback, configures voice parameters and dictionaries
+- `module_set()` -- handles SPD parameter changes (voice, rate, pitch, volume), mapping SPD's -100..+100 ranges to ViaVoice's native ranges
+- `module_speak_sync()` -- the main synthesis function (see below)
+- `module_stop()` / `module_pause()` -- sets a flag and calls `eciStop()`
+- `module_list_voices()` -- returns the 8 ViaVoice preset voices
+- `module_close()` -- cleans up ECI handle, dictionaries, and buffers
+
+### Text processing pipeline
+
+When `module_speak_sync()` receives text from SPD, it goes through these stages:
+
+1. **SSML stripping** -- Removes all XML tags (`<speak>`, `<voice>`, etc.) since ViaVoice doesn't understand SSML.
+
+2. **XML entity decoding** -- Converts `&apos;` back to `'`, `&amp;` to `&`, `&lt;` to `<`, `&gt;` to `>`, `&quot;` to `"`.
+
+3. **Text sanitization** (only for normal text reading, not character-by-character or key echo):
+   - Letters, digits, whitespace, basic sentence punctuation (`. , ! ?`), `$`, and `'` pass through unchanged.
+   - Clause-break characters (`;` `:` `(` `)` `[` `]` `{` `}`) are replaced with a comma attached to the preceding word. This preserves natural pause inflection without ViaVoice reading the character name aloud. For example, `word (aside) more` becomes `word, aside, more`. If the clause-break is at the start of text with no preceding word, it's simply dropped.
+   - Punctuation immediately after a clause-break char is consumed (e.g., `").` doesn't leave an isolated period).
+   - Em-dashes and en-dashes (U+2014, U+2013) get the same comma treatment.
+   - UTF-8 currency symbols are replaced with English words: `£` to "pound", `¢` to "cent", `¥` to "yen", `€` to "euro". The ASCII `$` passes through directly since ViaVoice handles it natively (reads "$5" as "five dollars").
+   - All other characters (including multi-byte UTF-8 that ViaVoice can't handle) are replaced with spaces.
+
+   The sanitizer allocates a new buffer (2x input length) rather than editing in-place, since clause-break expansion can produce more bytes than the input.
+
+4. **ECI synthesis** -- The cleaned text is passed to `eciAddText()`, then `eciSynthesize()` and `eciSynchronize()`. ViaVoice runs in plain text mode (`eciInputType = 0`) so it applies natural prosody to punctuation (trailing off at commas, rising pitch at question marks, finality at periods) rather than reading punctuation characters aloud.
+
+### Audio path
+
+ViaVoice synthesizes audio in chunks. An ECI callback (`eci_callback`) is called for each chunk with a buffer of 16-bit PCM samples. The callback appends these to a growing `AudioData` buffer (protected by a mutex). After synthesis completes, the full buffer is sent to the SPD server as a single `AudioTrack` (16-bit, mono, at the configured sample rate). SPD handles the actual audio output.
+
+### The bundle
+
+The tarball contains everything ViaVoice needs to run:
+
+- `sd_viavoice.bin` -- the 32-bit speech-dispatcher module
+- `libibmeci50.so` -- the ViaVoice ECI engine
+- `enu50.so` -- English voice data
+- `libstdc++-libc6.1-1.so.2` -- ancient libstdc++ from gcc 2.95 that ViaVoice was linked against
+- `ViaVoiceTTS/bin/` -- IBM SDK tools (inigen, vieweci, showmsg)
+- `ViaVoiceTTS/eci.ini` -- voice configuration (paths are fixed up by the installer)
+
+The only thing the host system needs to provide is 32-bit libc (`libc6:i386` on Debian) and speech-dispatcher.
+
+### Why not IBMTTS 6.7 / Voxin?
+
+IBMTTS 6.7 (sold as Voxin) is the newer version of this engine but has several issues: non-toggleable phrase prediction, non-disableable abbreviation dictionaries, and a bug where speech parameters (rate, volume) randomly reset during synthesis. ViaVoice 5.1 doesn't have these problems.
 
 ## License
 
-- Module code: BSD license (speech-dispatcher framework)
-- ViaVoice RTK/SDK: IBM proprietary (abandonware, archived for accessibility)
+- Module code: BSD (based on speech-dispatcher's skeleton module by Samuel Thibault)
+- ViaVoice RTK/SDK: IBM proprietary (abandonware, archived for accessibility use)
 
 ## Credits
 
 - IBM ViaVoice TTS 5.1 (~2000)
-- [speech-dispatcher](https://github.com/brailcom/speechd) project
+- [speech-dispatcher](https://github.com/brailcom/speechd)
 - [Archive.org](https://archive.org) for preserving the ViaVoice packages
