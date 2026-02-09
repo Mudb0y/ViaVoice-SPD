@@ -44,7 +44,7 @@ static char config_root_dict[256] = "";
 static char config_abbrev_dict[256] = "";
 
 /* Global ECI parameters */
-static int config_phrase_prediction = -1;  /* -1 = use default */
+static int config_phrase_prediction = 0;  /* 0 = disabled by default */
 static int config_number_mode = -1;
 static int config_text_mode = -1;
 static int config_real_world_units = -1;
@@ -294,8 +294,10 @@ int module_init(char **msg)
         return -1;
     }
     
-    /* Enable annotated text input (for voice switching etc) */
-    eciSetParam(eciHandle, eciInputType, 1);
+    /* Use plain text mode so ViaVoice handles punctuation naturally
+     * (inflection at commas, rising pitch at ?, finality at .) instead
+     * of reading punctuation characters aloud */
+    eciSetParam(eciHandle, eciInputType, 0);
     
     /* Set sample rate from config (default 22050 Hz) */
     eciSetParam(eciHandle, eciSampleRate, config_sample_rate);
@@ -516,15 +518,47 @@ int module_loop(void)
     return ret;
 }
 
+/* Decode XML entities in-place: &amp; &lt; &gt; &apos; &quot; */
+static void decode_xml_entities(char *text)
+{
+    static const struct { const char *entity; char ch; int len; } entities[] = {
+        { "&amp;",  '&',  5 },
+        { "&lt;",   '<',  4 },
+        { "&gt;",   '>',  4 },
+        { "&apos;", '\'', 6 },
+        { "&quot;", '"',  6 },
+    };
+
+    char *src = text, *dst = text;
+    while (*src) {
+        if (*src == '&') {
+            int matched = 0;
+            for (int e = 0; e < 5; e++) {
+                if (strncmp(src, entities[e].entity, entities[e].len) == 0) {
+                    *dst++ = entities[e].ch;
+                    src += entities[e].len;
+                    matched = 1;
+                    break;
+                }
+            }
+            if (!matched)
+                *dst++ = *src++;
+        } else {
+            *dst++ = *src++;
+        }
+    }
+    *dst = '\0';
+}
+
 /* Strip SSML/XML tags from text - ViaVoice doesn't understand SSML */
 static char *strip_ssml(const char *text, size_t len)
 {
     char *result = malloc(len + 1);
     if (!result) return NULL;
-    
+
     size_t j = 0;
     int in_tag = 0;
-    
+
     for (size_t i = 0; i < len; i++) {
         if (text[i] == '<') {
             in_tag = 1;
@@ -535,28 +569,137 @@ static char *strip_ssml(const char *text, size_t len)
         }
     }
     result[j] = '\0';
-    
+
+    /* Decode XML entities (e.g. &apos; -> ') */
+    decode_xml_entities(result);
+
     /* Trim leading/trailing whitespace */
     char *start = result;
     while (*start && (*start == ' ' || *start == '\n' || *start == '\t')) start++;
-    
+
+    j = strlen(result);
     char *end = result + j - 1;
     while (end > start && (*end == ' ' || *end == '\n' || *end == '\t')) end--;
     *(end + 1) = '\0';
-    
+
     /* If we trimmed from the start, move the string */
     if (start != result) {
         memmove(result, start, strlen(start) + 1);
     }
-    
+
     return result;
+}
+
+/*
+ * Sanitize text for ViaVoice (plain text mode).  Returns a new
+ * malloc'd string (caller frees).  Clause-break characters become
+ * commas attached to the preceding word so ViaVoice uses natural
+ * inflection instead of reading punctuation aloud.
+ */
+static char *sanitize_for_viavoice(const char *text)
+{
+    size_t len = strlen(text);
+    /* Each clause-break char can expand to ", " (2 bytes) so worst
+     * case output is 2*len.  Generous but safe. */
+    char *out = malloc(len * 2 + 1);
+    if (!out) return NULL;
+
+    const unsigned char *src = (const unsigned char *)text;
+    char *dst = out;
+
+    while (*src) {
+        unsigned char c = *src;
+
+        if (c < 0x80) {
+            if ((c >= 'A' && c <= 'Z') ||
+                (c >= 'a' && c <= 'z') ||
+                (c >= '0' && c <= '9') ||
+                c == ' ' || c == '\t' || c == '\n' ||
+                c == '.' || c == ',' || c == '!' || c == '?' ||
+                c == '$') {
+                *dst++ = c;
+                src++;
+                continue;
+            }
+
+            /* Clause-break punctuation → comma attached to preceding word */
+            if (c == ';' || c == ':' ||
+                c == '(' || c == ')' ||
+                c == '[' || c == ']' ||
+                c == '{' || c == '}') {
+                while (dst > out && (*(dst-1) == ' ' || *(dst-1) == '\t'))
+                    dst--;
+                *dst++ = ',';
+                src++;
+                /* Skip trailing punctuation that would end up isolated (e.g. ").") */
+                while (*src == '.' || *src == ',' || *src == '!' ||
+                       *src == '?' || *src == ';' || *src == ':') src++;
+                while (*src == ' ' || *src == '\t') src++;
+                *dst++ = ' ';
+                continue;
+            }
+
+            *dst++ = ' ';
+            src++;
+            continue;
+        }
+
+        /* Multi-byte UTF-8 */
+        int seqlen;
+        if (c < 0xE0)      seqlen = 2;
+        else if (c < 0xF0)  seqlen = 3;
+        else                 seqlen = 4;
+
+        int valid = 1;
+        for (int i = 1; i < seqlen; i++) {
+            if (!src[i]) { valid = 0; break; }
+        }
+        if (!valid) { src++; continue; }
+
+        /* Currency symbols → English word (ViaVoice is too old for UTF-8) */
+        if (seqlen == 2 && c == 0xC2) {
+            const char *word = NULL;
+            if (src[1] == 0xA3) word = "pound";   /* £ */
+            else if (src[1] == 0xA2) word = "cent";    /* ¢ */
+            else if (src[1] == 0xA5) word = "yen";     /* ¥ */
+            if (word) {
+                while (*word) *dst++ = *word++;
+                src += 2;
+                continue;
+            }
+        }
+        if (seqlen == 3 && c == 0xE2 && src[1] == 0x82 && src[2] == 0xAC) {
+            const char *word = "euro";  /* € */
+            while (*word) *dst++ = *word++;
+            src += 3;
+            continue;
+        }
+
+        /* Em-dash / En-dash → comma attached to word */
+        if (seqlen == 3 && c == 0xE2 && src[1] == 0x80 &&
+            (src[2] == 0x94 || src[2] == 0x93)) {
+            while (dst > out && (*(dst-1) == ' ' || *(dst-1) == '\t'))
+                dst--;
+            *dst++ = ',';
+            src += 3;
+            /* Skip trailing punctuation that would end up isolated */
+            while (*src == '.' || *src == ',' || *src == '!' ||
+                   *src == '?' || *src == ';' || *src == ':') src++;
+            while (*src == ' ' || *src == '\t') src++;
+            *dst++ = ' ';
+            continue;
+        }
+
+        *dst++ = ' ';
+        src += seqlen;
+    }
+    *dst = '\0';
+    return out;
 }
 
 /* Synchronous speak - this is called by the module framework */
 void module_speak_sync(const char *data, size_t bytes, SPDMessageType msgtype)
 {
-    (void)msgtype;
-    
     if (eciHandle == NULL_ECI_HAND) {
         module_speak_error();
         return;
@@ -579,14 +722,27 @@ void module_speak_sync(const char *data, size_t bytes, SPDMessageType msgtype)
         eciCopyVoice(eciHandle, current_voice, 0);
     }
     
-    /* Strip SSML tags - ViaVoice doesn't understand them */
+    /* Strip SSML tags */
     char *text = strip_ssml(data, bytes);
     if (!text || !*text) {
         free(text);
         module_speak_error();
         return;
     }
-    
+
+    /* Only sanitize during normal reading — let ViaVoice announce
+     * the actual character for CHAR and KEY message types */
+    if (msgtype == SPD_MSGTYPE_TEXT || msgtype == SPD_MSGTYPE_SOUND_ICON) {
+        char *sanitized = sanitize_for_viavoice(text);
+        free(text);
+        text = sanitized;
+        if (!text || !*text) {
+            free(text);
+            module_speak_error();
+            return;
+        }
+    }
+
     DBG("Speaking: %s", text);
     
     /* Confirm we're ready */
