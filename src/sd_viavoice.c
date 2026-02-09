@@ -629,7 +629,9 @@ static char *sanitize_for_viavoice(const char *text)
                 c == '{' || c == '}') {
                 while (dst > out && (*(dst-1) == ' ' || *(dst-1) == '\t'))
                     dst--;
-                *dst++ = ',';
+                /* Only insert comma if there's a preceding word to attach to */
+                if (dst > out)
+                    *dst++ = ',';
                 src++;
                 /* Skip trailing punctuation that would end up isolated (e.g. ").") */
                 while (*src == '.' || *src == ',' || *src == '!' ||
@@ -680,7 +682,8 @@ static char *sanitize_for_viavoice(const char *text)
             (src[2] == 0x94 || src[2] == 0x93)) {
             while (dst > out && (*(dst-1) == ' ' || *(dst-1) == '\t'))
                 dst--;
-            *dst++ = ',';
+            if (dst > out)
+                *dst++ = ',';
             src += 3;
             /* Skip trailing punctuation that would end up isolated */
             while (*src == '.' || *src == ',' || *src == '!' ||
