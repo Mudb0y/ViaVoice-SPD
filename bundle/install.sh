@@ -1,27 +1,25 @@
 #!/bin/bash
 #
 # ViaVoice TTS Bundle Installer
-# =============================
 #
 # Installs the ViaVoice TTS module for speech-dispatcher.
 # Requires: speech-dispatcher, 32-bit lib support (libc6:i386 on Debian/Ubuntu)
 #
 
-set -e
+set -euo pipefail
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# --- Output helpers (color suppressed when not on a terminal) ---
+if [[ -t 2 ]]; then
+    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'; NC='\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; NC=''
+fi
 
-info()    { echo -e "${GREEN}[INFO]${NC} $1"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
-step()    { echo -e "${BLUE}[STEP]${NC} $1"; }
-success() { echo -e "${GREEN}[OK]${NC} $1"; }
+info() { echo -e "${GREEN}[INFO]${NC} $*" >&2; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
+die()  { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+step() { echo -e "${BLUE}[STEP]${NC} $*" >&2; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -29,107 +27,174 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SYSTEM_INSTALL="/opt/ViaVoiceTTS"
 USER_INSTALL="$HOME/.local/ViaVoiceTTS"
 
-echo ""
-echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║     ViaVoice TTS - Speech Dispatcher Module Installer     ║${NC}"
-echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
-echo ""
+# --- Argument parsing ---
+YES=false
+PREFIX=""
 
-# Check if we're running from the bundle directory
+usage() {
+    cat <<'EOF'
+Usage: install.sh [OPTIONS]
+
+Install the ViaVoice TTS speech-dispatcher module.
+
+Options:
+  --yes              Skip confirmation prompt
+  --prefix=PATH      Custom install path (default: /opt/ViaVoiceTTS as root,
+                     ~/.local/ViaVoiceTTS as user)
+  --help             Show this help message
+
+Examples:
+  sudo ./install.sh                      # System-wide install
+  ./install.sh                           # User install
+  ./install.sh --prefix=/tmp/test --yes  # Custom path, non-interactive
+EOF
+    exit 0
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        --yes)         YES=true ;;
+        --prefix=*)    PREFIX="${arg#--prefix=}" ;;
+        --help|-h)     usage ;;
+        *)             die "Unknown option: $arg (try --help)" ;;
+    esac
+done
+
+# --- Prerequisites ---
+
+# Check that we're running from the bundle directory
 if [[ ! -f "$SCRIPT_DIR/usr/bin/sd_viavoice.bin" ]]; then
-    error "This script must be run from the bundle directory"
+    die "This script must be run from the bundle directory (usr/bin/sd_viavoice.bin not found)"
 fi
 
 # Check for 32-bit support
-if ! /lib/ld-linux.so.2 --version &>/dev/null 2>&1; then
-    if [[ -f /lib32/ld-linux.so.2 ]]; then
-        : # OK, different path
+check_32bit_support() {
+    local candidates=(
+        /lib/ld-linux.so.2
+        /lib32/ld-linux.so.2
+        /lib/i386-linux-gnu/ld-linux.so.2
+    )
+    for ld in "${candidates[@]}"; do
+        [[ -f "$ld" ]] && return 0
+    done
+    return 1
+}
+
+if ! check_32bit_support; then
+    warn "32-bit support may not be installed"
+    # Detect package manager and give targeted advice
+    if command -v apt &>/dev/null; then
+        echo "  Fix: sudo dpkg --add-architecture i386 && sudo apt install libc6:i386" >&2
+    elif command -v pacman &>/dev/null; then
+        echo "  Fix: sudo pacman -S lib32-glibc" >&2
+    elif command -v dnf &>/dev/null; then
+        echo "  Fix: sudo dnf install glibc.i686" >&2
     else
-        warn "32-bit support may not be installed"
-        echo "  On Debian/Ubuntu: sudo dpkg --add-architecture i386 && sudo apt install libc6:i386"
-        echo "  On Arch: sudo pacman -S lib32-glibc"
-        echo ""
+        echo "  Install 32-bit libc for your distribution" >&2
     fi
+    echo "" >&2
 fi
 
-# Detect if running as root
-if [[ $EUID -eq 0 ]]; then
+# --- Detect install mode ---
+if [[ -n "$PREFIX" ]]; then
+    INSTALL_PATH="$PREFIX"
+    if [[ "$INSTALL_PATH" == /opt/* || "$INSTALL_PATH" == /usr/* ]]; then
+        SYSTEM_MODE=true
+    else
+        SYSTEM_MODE=false
+    fi
+    info "Custom install path: $INSTALL_PATH"
+elif [[ $EUID -eq 0 ]]; then
     INSTALL_PATH="$SYSTEM_INSTALL"
     SYSTEM_MODE=true
-    info "Running as root - will install to $INSTALL_PATH"
+    info "Running as root — will install to $INSTALL_PATH"
 else
     INSTALL_PATH="$USER_INSTALL"
     SYSTEM_MODE=false
-    info "Running as user - will install to $INSTALL_PATH"
-    echo ""
-    echo -e "  ${YELLOW}Tip:${NC} Run with sudo for system-wide install to /opt/ViaVoiceTTS"
-    echo ""
+    info "Running as user — will install to $INSTALL_PATH"
+    echo "  Tip: Run with sudo for system-wide install to /opt/ViaVoiceTTS" >&2
+    echo "" >&2
 fi
 
-# Allow override
-if [[ -n "$1" ]]; then
-    INSTALL_PATH="$1"
-    info "Custom install path: $INSTALL_PATH"
-fi
-
-# Determine speech-dispatcher paths based on install mode
-if [[ $SYSTEM_MODE == true ]]; then
-    # System install: use pkg-config to find the correct module path
-    if command -v pkg-config &>/dev/null; then
-        SPD_MODULE_DIR=$(pkg-config --variable=modulebindir speech-dispatcher 2>/dev/null || true)
-    fi
-    # Fallback if pkg-config doesn't work
-    if [[ -z "$SPD_MODULE_DIR" || ! -d "$SPD_MODULE_DIR" ]]; then
-        for path in /usr/lib/speech-dispatcher-modules /usr/libexec/speech-dispatcher-modules; do
-            if [[ -d "$path" ]]; then
-                SPD_MODULE_DIR="$path"
-                break
+# --- Find speech-dispatcher paths ---
+find_spd_module_dir() {
+    if [[ "$SYSTEM_MODE" == true ]]; then
+        # Try pkg-config first
+        if command -v pkg-config &>/dev/null; then
+            local dir
+            dir=$(pkg-config --variable=modulebindir speech-dispatcher 2>/dev/null) || true
+            if [[ -d "${dir:-}" ]]; then
+                echo "$dir"
+                return 0
+            fi
+        fi
+        # Common distro paths
+        local candidates=(
+            /usr/lib/speech-dispatcher-modules          # Debian/Ubuntu
+            /usr/libexec/speech-dispatcher-modules       # Fedora/RHEL/Arch
+            /usr/lib64/speech-dispatcher-modules         # openSUSE 64-bit
+        )
+        for dir in "${candidates[@]}"; do
+            if [[ -d "$dir" ]]; then
+                echo "$dir"
+                return 0
             fi
         done
+    else
+        # User install: XDG-compliant path
+        echo "$HOME/.local/libexec/speech-dispatcher-modules"
+        return 0
     fi
-    SPD_CONFIG_DIR="/etc/speech-dispatcher/modules"
-else
-    # User install: use XDG-compliant paths
-    SPD_MODULE_DIR="$HOME/.local/libexec/speech-dispatcher-modules"
-    SPD_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/speech-dispatcher/modules"
-fi
+    return 1
+}
 
-# Verify we found a module directory
-if [[ -z "$SPD_MODULE_DIR" ]]; then
-    error "Could not determine speech-dispatcher module directory. Is speech-dispatcher installed?"
-fi
+find_spd_config_dir() {
+    if [[ "$SYSTEM_MODE" == true ]]; then
+        echo "/etc/speech-dispatcher/modules"
+    else
+        echo "${XDG_CONFIG_HOME:-$HOME/.config}/speech-dispatcher/modules"
+    fi
+}
 
-# Confirm
+SPD_MODULE_DIR="$(find_spd_module_dir)" || die "Could not find speech-dispatcher module directory. Is speech-dispatcher installed?"
+SPD_CONFIG_DIR="$(find_spd_config_dir)"
+
+# --- Confirm installation ---
 echo ""
 echo "Installation summary:"
 echo "  Bundle install path: $INSTALL_PATH"
 echo "  SPD module symlink:  $SPD_MODULE_DIR/sd_viavoice"
 echo "  SPD config path:     $SPD_CONFIG_DIR/viavoice.conf"
 echo ""
-read -p "Continue? [Y/n] " -n 1 -r
-echo ""
-if [[ ! $REPLY =~ ^[Yy]?$ ]]; then
-    echo "Aborted."
-    exit 0
+
+if [[ "$YES" != true ]]; then
+    if [[ ! -t 0 ]]; then
+        die "stdin is not a terminal — pass --yes for non-interactive install"
+    fi
+    read -p "Continue? [Y/n] " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]?$ ]]; then
+        echo "Aborted."
+        exit 0
+    fi
 fi
 
-# Step 1: Copy bundle to install location
+# --- Step 1: Copy bundle to install location ---
 step "Copying files to $INSTALL_PATH..."
-mkdir -p "$INSTALL_PATH"
-cp -r "$SCRIPT_DIR"/* "$INSTALL_PATH/"
+mkdir -p "$INSTALL_PATH" || die "Failed to create $INSTALL_PATH"
+cp -r "$SCRIPT_DIR"/* "$INSTALL_PATH/" || die "Failed to copy bundle files"
 
-# Step 2: Fix eci.ini path
+# --- Step 2: Fix eci.ini path ---
 step "Configuring eci.ini..."
 
 ENU_LIB="$INSTALL_PATH/usr/lib/enu50.so"
 ECI_INI="$INSTALL_PATH/usr/lib/ViaVoiceTTS/eci.ini"
 
 if [[ -f "$ECI_INI" ]]; then
-    # Replace placeholder or old path with actual install path
-    sed -i "s|^Path=.*|Path=$ENU_LIB|" "$ECI_INI"
-    success "eci.ini configured: Path=$ENU_LIB"
+    sed -i "s|^Path=.*|Path=$ENU_LIB|" "$ECI_INI" || die "Failed to update eci.ini"
+    info "eci.ini configured: Path=$ENU_LIB"
 else
-    warn "eci.ini not found - creating minimal config"
+    warn "eci.ini not found — creating minimal config"
     mkdir -p "$(dirname "$ECI_INI")"
     cat > "$ECI_INI" << EOF
 [1.0]
@@ -144,73 +209,72 @@ Voice4=0 89 52 43 0 0 50 93
 Voice5=0 50 69 34 0 0 70 92
 Voice6=1 56 89 35 0 40 70 95
 EOF
-    success "Created eci.ini"
+    info "Created eci.ini"
 fi
 
-# Step 3: Set permissions
+# --- Step 3: Set permissions ---
 step "Setting permissions..."
-chmod +x "$INSTALL_PATH/sd_viavoice"
-chmod +x "$INSTALL_PATH/usr/bin/sd_viavoice.bin"
-chmod +x "$INSTALL_PATH/usr/lib/ViaVoiceTTS/bin/"* 2>/dev/null || true
+chmod +x "$INSTALL_PATH/sd_viavoice" || die "Failed to set permissions on sd_viavoice"
+chmod +x "$INSTALL_PATH/usr/bin/sd_viavoice.bin" || die "Failed to set permissions on sd_viavoice.bin"
+# ViaVoice tools (inigen etc.) - best effort
+find "$INSTALL_PATH/usr/lib/ViaVoiceTTS/bin/" -type f -exec chmod +x {} + 2>/dev/null || true
 
-# Step 4: Create speech-dispatcher module symlink
+# --- Step 4: Create speech-dispatcher module symlink ---
 step "Creating symlink in speech-dispatcher modules directory..."
 
-mkdir -p "$SPD_MODULE_DIR"
+mkdir -p "$SPD_MODULE_DIR" || die "Failed to create $SPD_MODULE_DIR"
 SYMLINK_PATH="$SPD_MODULE_DIR/sd_viavoice"
 
 if [[ -e "$SYMLINK_PATH" || -L "$SYMLINK_PATH" ]]; then
     warn "Existing sd_viavoice found, backing up..."
-    mv "$SYMLINK_PATH" "$SYMLINK_PATH.backup.$(date +%s)" 2>/dev/null || rm -f "$SYMLINK_PATH"
+    mv "$SYMLINK_PATH" "$SYMLINK_PATH.backup.$(date +%s)" || rm -f "$SYMLINK_PATH"
 fi
 
-ln -sf "$INSTALL_PATH/sd_viavoice" "$SYMLINK_PATH"
-success "Symlink created: $SYMLINK_PATH"
+ln -sf "$INSTALL_PATH/sd_viavoice" "$SYMLINK_PATH" || die "Failed to create symlink at $SYMLINK_PATH"
+info "Symlink created: $SYMLINK_PATH -> $INSTALL_PATH/sd_viavoice"
 
-# Step 5: Install module config file
+# --- Step 5: Install module config file ---
 step "Installing module configuration..."
 
-mkdir -p "$SPD_CONFIG_DIR"
+mkdir -p "$SPD_CONFIG_DIR" || die "Failed to create $SPD_CONFIG_DIR"
 if [[ -f "$INSTALL_PATH/etc/viavoice.conf" ]]; then
-    cp "$INSTALL_PATH/etc/viavoice.conf" "$SPD_CONFIG_DIR/viavoice.conf"
-    success "Config installed: $SPD_CONFIG_DIR/viavoice.conf"
+    cp "$INSTALL_PATH/etc/viavoice.conf" "$SPD_CONFIG_DIR/viavoice.conf" || die "Failed to install viavoice.conf"
+    info "Config installed: $SPD_CONFIG_DIR/viavoice.conf"
+else
+    warn "viavoice.conf not found in bundle"
 fi
 
-# Step 6: Restart speech-dispatcher
+# --- Step 6: Restart speech-dispatcher ---
 step "Restarting speech-dispatcher..."
 if pgrep -x speech-dispatch >/dev/null 2>&1; then
-    pkill speech-dispatch 2>/dev/null || true
+    warn "Killing running speech-dispatcher (it will restart on next use)"
+    pkill speech-dispatch || warn "Could not kill speech-dispatcher"
     sleep 1
-    info "speech-dispatcher stopped (will restart on next use)"
 else
     info "speech-dispatcher not running"
 fi
 
-# Quick sanity check
-echo ""
-echo -e "${CYAN}Verifying installation...${NC}"
+# --- Step 7: Verify installation ---
+step "Verifying installation..."
 
-# Check library dependencies
-if ldd "$INSTALL_PATH/usr/bin/sd_viavoice.bin" 2>&1 | grep -q "not found"; then
-    warn "Some libraries may be missing:"
-    ldd "$INSTALL_PATH/usr/bin/sd_viavoice.bin" 2>&1 | grep "not found"
-    echo ""
-    echo "Try installing 32-bit libraries:"
-    echo "  Debian/Ubuntu: sudo apt install libc6:i386 libpthread-stubs0-dev:i386"
-    echo "  Arch: sudo pacman -S lib32-glibc"
+LIB_DIR="$INSTALL_PATH/usr/lib"
+BIN="$INSTALL_PATH/usr/bin/sd_viavoice.bin"
+
+missing=$(LD_LIBRARY_PATH="$LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$BIN" 2>&1 | grep "not found" || true)
+if [[ -n "$missing" ]]; then
+    warn "Some libraries are missing:"
+    echo "$missing" >&2
+    echo "" >&2
+    if command -v apt &>/dev/null; then
+        echo "  Try: sudo dpkg --add-architecture i386 && sudo apt install libc6:i386" >&2
+    elif command -v pacman &>/dev/null; then
+        echo "  Try: sudo pacman -S lib32-glibc" >&2
+    elif command -v dnf &>/dev/null; then
+        echo "  Try: sudo dnf install glibc.i686" >&2
+    fi
 else
-    success "All library dependencies satisfied"
+    info "All library dependencies satisfied"
 fi
 
-# Check if ViaVoice libs are found
-if LD_LIBRARY_PATH="$INSTALL_PATH/usr/lib" ldd "$INSTALL_PATH/usr/bin/sd_viavoice.bin" 2>&1 | grep -q "libibmeci50.so.*not found"; then
-    error "ViaVoice library not found - installation may be incomplete"
-else
-    success "ViaVoice libraries OK"
-fi
-
 echo ""
-echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}  Installation complete!${NC}"
-echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
-echo ""
+info "Installation complete!"

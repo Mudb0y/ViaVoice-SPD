@@ -2,21 +2,32 @@
 #
 # ViaVoice Speech Dispatcher Module Wrapper
 #
-# This wrapper sets up the environment for ViaVoice TTS and runs the module.
-# It uses LD_LIBRARY_PATH to find ViaVoice libs while letting the system
-# provide standard libs (libc, pthread, etc.) for compatibility.
+# Sets up the environment for ViaVoice TTS and exec's the module binary.
+# stdout goes to speech-dispatcher, so all diagnostics go to stderr.
 #
 
-# Find our install directory (resolve symlinks)
+set -euo pipefail
+
+# Resolve symlinks to find the actual install directory
 BASE="$(dirname "$(readlink -f "$0")")"
 
-# Set up environment for ViaVoice
+# Verify critical files exist before exec
+if [[ ! -f "$BASE/usr/bin/sd_viavoice.bin" ]]; then
+    echo "sd_viavoice: binary not found: $BASE/usr/bin/sd_viavoice.bin" >&2
+    exit 1
+fi
+if [[ ! -f "$BASE/usr/lib/ViaVoiceTTS/eci.ini" ]]; then
+    echo "sd_viavoice: eci.ini not found: $BASE/usr/lib/ViaVoiceTTS/eci.ini" >&2
+    exit 1
+fi
+
 # ECIINI tells ViaVoice where to find the voice configuration
 export ECIINI="$BASE/usr/lib/ViaVoiceTTS/eci.ini"
 
-# Add our lib directory to library path
 # ViaVoice-specific libs (libibmeci50.so, libstdc++-libc6.1-1.so.2) live here
 export LD_LIBRARY_PATH="$BASE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-# Run the module
+# LD_PRELOAD enu50.so to work around loading issues
+export LD_PRELOAD="$BASE/usr/lib/enu50.so${LD_PRELOAD:+:$LD_PRELOAD}"
+
 exec "$BASE/usr/bin/sd_viavoice.bin" "$@"
