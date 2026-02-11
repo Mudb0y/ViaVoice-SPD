@@ -52,23 +52,13 @@ static int config_real_world_units = -1;
 /* Dictionary handle */
 static ECIDictHand dictHandle = NULL_DICT_HAND;
 
-/* Voice settings */
-static int current_voice = 0;  /* 0-7 for ViaVoice preset voices */
+/* Voice settings — the voice is fixed at init from viavoice.conf */
+static int config_voice = 0;   /* 0-7 ViaVoice preset, set via ViaVoiceDefaultVoice */
 static int current_rate = 50;  /* 0-250, default 50 */
 static int current_pitch = 65; /* 0-100, default 65 */
 static int current_volume = 90;
 
-/* ViaVoice voices:
- * 0 = Adult Male 1 (Wade)
- * 1 = Adult Female 1 (Flo)
- * 2 = Child (Bobbie)
- * 3 = Adult Male 2
- * 4 = Adult Male 3
- * 5 = Adult Female 2
- * 6 = Elderly Female (Grandma)
- * 7 = Elderly Male (Grandpa)
- */
-static const char *voice_names[] = {
+static const char *voice_name_table[] = {
     "Wade", "Flo", "Bobbie", "Male2", "Male3", "Female2", "Grandma", "Grandpa"
 };
 
@@ -157,8 +147,8 @@ int module_config(const char *configfile)
             else if (strcasecmp(key, "ViaVoiceDefaultVoice") == 0) {
                 int v = atoi(value);
                 if (v >= 0 && v <= 7) {
-                    current_voice = v;
-                    DBG("Config: default voice %d", current_voice);
+                    config_voice = v;
+                    DBG("Config: voice %d (%s)", config_voice, voice_name_table[config_voice]);
                 }
             }
             else if (strcasecmp(key, "ViaVoicePitchBaseline") == 0) {
@@ -313,23 +303,25 @@ int module_init(char **msg)
     
     DBG("initialized, sample rate %d Hz", eci_sample_rate);
     
-    /* Apply custom voice parameters from config */
-    for (int v = 0; v < 8; v++) {
-        if (config_pitch_baseline >= 0)
-            eciSetVoiceParam(eciHandle, v, eciPitchBaseline, config_pitch_baseline);
-        if (config_pitch_fluctuation >= 0)
-            eciSetVoiceParam(eciHandle, v, eciPitchFluctuation, config_pitch_fluctuation);
-        if (config_speed >= 0)
-            eciSetVoiceParam(eciHandle, v, eciSpeed, config_speed);
-        if (config_volume >= 0)
-            eciSetVoiceParam(eciHandle, v, eciVolume, config_volume);
-        if (config_head_size >= 0)
-            eciSetVoiceParam(eciHandle, v, eciHeadSize, config_head_size);
-        if (config_roughness >= 0)
-            eciSetVoiceParam(eciHandle, v, eciRoughness, config_roughness);
-        if (config_breathiness >= 0)
-            eciSetVoiceParam(eciHandle, v, eciBreathiness, config_breathiness);
-    }
+    /* Apply custom voice parameters from config to the selected voice */
+    if (config_pitch_baseline >= 0)
+        eciSetVoiceParam(eciHandle, config_voice, eciPitchBaseline, config_pitch_baseline);
+    if (config_pitch_fluctuation >= 0)
+        eciSetVoiceParam(eciHandle, config_voice, eciPitchFluctuation, config_pitch_fluctuation);
+    if (config_speed >= 0)
+        eciSetVoiceParam(eciHandle, config_voice, eciSpeed, config_speed);
+    if (config_volume >= 0)
+        eciSetVoiceParam(eciHandle, config_voice, eciVolume, config_volume);
+    if (config_head_size >= 0)
+        eciSetVoiceParam(eciHandle, config_voice, eciHeadSize, config_head_size);
+    if (config_roughness >= 0)
+        eciSetVoiceParam(eciHandle, config_voice, eciRoughness, config_roughness);
+    if (config_breathiness >= 0)
+        eciSetVoiceParam(eciHandle, config_voice, eciBreathiness, config_breathiness);
+
+    /* Copy configured voice to voice 0 (the active synthesis voice) */
+    if (config_voice != 0)
+        eciCopyVoice(eciHandle, config_voice, 0);
     
     /* Apply global ECI parameters from config */
     if (config_phrase_prediction >= 0) {
@@ -400,29 +392,16 @@ int module_init(char **msg)
 
 SPDVoice **module_list_voices(void)
 {
-    /* ViaVoice has 8 preset voices */
-    SPDVoice **voices = malloc(9 * sizeof(SPDVoice*));
+    SPDVoice **voices = malloc(2 * sizeof(SPDVoice*));
     if (!voices) return NULL;
-    
-    for (int i = 0; i < 8; i++) {
-        voices[i] = malloc(sizeof(SPDVoice));
-        if (!voices[i]) {
-            /* Cleanup on failure */
-            for (int j = 0; j < i; j++) {
-                free(voices[j]->name);
-                free(voices[j]->language);
-                free(voices[j]->variant);
-                free(voices[j]);
-            }
-            free(voices);
-            return NULL;
-        }
-        voices[i]->name = strdup(voice_names[i]);
-        voices[i]->language = strdup("en-US");
-        voices[i]->variant = strdup("none");
-    }
-    voices[8] = NULL;
-    
+
+    voices[0] = malloc(sizeof(SPDVoice));
+    if (!voices[0]) { free(voices); return NULL; }
+    voices[0]->name = strdup(voice_name_table[config_voice]);
+    voices[0]->language = strdup("en-US");
+    voices[0]->variant = strdup("none");
+    voices[1] = NULL;
+
     return voices;
 }
 
@@ -430,30 +409,8 @@ int module_set(const char *var, const char *val)
 {
     DBG("set %s = %s", var, val);
     
-    if (!strcmp(var, "voice")) {
-        /* SPD voice type to ViaVoice voice mapping */
-        if (!strcmp(val, "male1")) current_voice = 0;
-        else if (!strcmp(val, "male2")) current_voice = 3;
-        else if (!strcmp(val, "male3")) current_voice = 4;
-        else if (!strcmp(val, "female1")) current_voice = 1;
-        else if (!strcmp(val, "female2")) current_voice = 5;
-        else if (!strcmp(val, "female3")) current_voice = 6;
-        else if (!strcmp(val, "child_male")) current_voice = 2;
-        else if (!strcmp(val, "child_female")) current_voice = 2;
-        return 0;
-    } else if (!strcmp(var, "synthesis_voice")) {
-        /* Direct voice name - may be NULL or empty */
-        if (!val || !*val || !strcmp(val, "NULL"))
-            return 0;  /* Ignore, keep current voice */
-        for (int i = 0; i < 8; i++) {
-            if (!strcasecmp(val, voice_names[i])) {
-                current_voice = i;
-                return 0;
-            }
-        }
-        return 0;  /* Unknown voice, ignore */
-    } else if (!strcmp(var, "language")) {
-        /* ViaVoice only supports English */
+    if (!strcmp(var, "voice") || !strcmp(var, "synthesis_voice") || !strcmp(var, "language")) {
+        /* Voice is fixed from viavoice.conf; ignore runtime changes */
         return 0;
     } else if (!strcmp(var, "rate")) {
         /* SPD rate: -100 to +100, ViaVoice: 0-250 */
@@ -716,15 +673,10 @@ void module_speak_sync(const char *data, size_t bytes, SPDMessageType msgtype)
     audio_data.num_samples = 0;
     pthread_mutex_unlock(&audio_mutex);
     
-    /* Set voice parameters via ECI API (not text annotations) */
-    eciSetVoiceParam(eciHandle, current_voice, eciSpeed, current_rate);
-    eciSetVoiceParam(eciHandle, current_voice, eciPitchBaseline, current_pitch);
-    eciSetVoiceParam(eciHandle, current_voice, eciVolume, current_volume);
-    
-    /* Copy voice to voice 0 (the active voice) if not already voice 0 */
-    if (current_voice != 0) {
-        eciCopyVoice(eciHandle, current_voice, 0);
-    }
+    /* Apply per-utterance overrides from speech-dispatcher */
+    eciSetVoiceParam(eciHandle, 0, eciSpeed, current_rate);
+    eciSetVoiceParam(eciHandle, 0, eciPitchBaseline, current_pitch);
+    eciSetVoiceParam(eciHandle, 0, eciVolume, current_volume);
     
     /* Strip SSML tags */
     char *text = strip_ssml(data, bytes);
