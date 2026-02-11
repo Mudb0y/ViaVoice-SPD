@@ -17,3 +17,6 @@ deps/
 # OS files
 .DS_Store
 Thumbs.db
+
+# CMU Pronouncing Dictionary (downloaded by tools/vvdict)
+data/cmudict.txt

@@ -212,6 +212,12 @@ EOF
     info "Created eci.ini"
 fi
 
+# --- Step 2b: Fix viavoice.conf install path ---
+if [[ -f "$INSTALL_PATH/etc/viavoice.conf" ]]; then
+    sed -i "s|@INSTALL_PATH@|$INSTALL_PATH|g" "$INSTALL_PATH/etc/viavoice.conf"
+    info "viavoice.conf configured: @INSTALL_PATH@ → $INSTALL_PATH"
+fi
+
 # --- Step 3: Set permissions ---
 step "Setting permissions..."
 chmod +x "$INSTALL_PATH/sd_viavoice" || die "Failed to set permissions on sd_viavoice"

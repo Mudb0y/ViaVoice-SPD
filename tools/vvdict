@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""vvdict — Pronunciation dictionary tool for ViaVoice TTS.
+
+Manages config/main.dict using CMU Pronouncing Dictionary as a source,
+with automatic ARPABET→SPR phoneme conversion.
+
+Usage:
+    vvdict add <word>        Add a pronunciation override (interactive)
+    vvdict rm <word>         Remove an entry
+    vvdict list              Show all entries
+    vvdict search <pattern>  Search CMUdict for substring matches
+"""
+
+import argparse
+import os
+import re
+import sys
+import urllib.request
+
+# --- Paths (relative to this script's location) ---
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+DICT_FILE = os.path.join(ROOT_DIR, "config", "main.dict")
+CMUDICT_FILE = os.path.join(ROOT_DIR, "data", "cmudict.txt")
+CMUDICT_URL = "https://raw.githubusercontent.com/cmusphinx/cmudict/master/cmudict.dict"
+
+# --- ARPABET → SPR mapping ---
+# Consonants and simple vowels (no stress distinction)
+ARPABET_TO_SPR = {
+    "AA": "a",   # father
+    "AE": "A",   # bat
+    "AO": "c",   # bought
+    "AW": "W",   # out
+    "AY": "Y",   # bite
+    "B":  "b",
+    "CH": "C",   # church
+    "D":  "d",
+    "DH": "D",   # this
+    "EH": "E",   # bet
+    "ER": "R",   # bird
+    "EY": "e",   # bait
+    "F":  "f",
+    "G":  "g",
+    "HH": "h",
+    "IH": "I",   # bit
+    "IY": "i",   # beet
+    "JH": "J",   # judge
+    "K":  "k",
+    "L":  "l",
+    "M":  "m",
+    "N":  "n",
+    "NG": "G",   # sing
+    "OW": "o",   # boat
+    "OY": "O",   # boy
+    "P":  "p",
+    "R":  "r",
+    "S":  "s",
+    "SH": "S",   # ship
+    "T":  "t",
+    "TH": "T",   # thin
+    "UH": "U",   # book
+    "UW": "u",   # boot
+    "V":  "v",
+    "W":  "w",
+    "Y":  "y",
+    "Z":  "z",
+    "ZH": "Z",   # measure
+}
+
+
+def arpabet_to_spr(phones):
+    """Convert a list of ARPABET phones (e.g. ['K', 'AE1', 'T']) to SPR string.
+
+    Stress digits (0/1/2) in ARPABET trail the vowel; in SPR they become a
+    leading digit before the vowel.  Special case: AH0 → 'x' (schwa),
+    AH1/AH2 → 'H' (strut vowel).
+    """
+    spr = []
+    for phone in phones:
+        # Extract trailing stress digit if present
+        stress = ""
+        base = phone
+        if phone and phone[-1].isdigit():
+            stress = phone[-1]
+            base = phone[:-1]
+
+        # Special handling for AH (schwa vs strut)
+        if base == "AH":
+            if stress == "0":
+                spr.append("x")
+            else:
+                # Stressed AH → H, with stress prefix
+                if stress:
+                    spr.append(stress + "H")
+                else:
+                    spr.append("H")
+            continue
+
+        spr_phone = ARPABET_TO_SPR.get(base)
+        if spr_phone is None:
+            # Unknown phone — pass through as-is
+            spr.append(phone)
+            continue
+
+        if stress:
+            spr.append(stress + spr_phone)
+        else:
+            spr.append(spr_phone)
+
+    return "`[" + "".join(spr) + "]"
+
+
+def ensure_cmudict():
+    """Download CMUdict if not cached locally. Returns path to the file."""
+    if os.path.isfile(CMUDICT_FILE):
+        return CMUDICT_FILE
+
+    os.makedirs(os.path.dirname(CMUDICT_FILE), exist_ok=True)
+    print(f"Downloading CMU Pronouncing Dictionary...", file=sys.stderr)
+    print(f"  URL: {CMUDICT_URL}", file=sys.stderr)
+    try:
+        urllib.request.urlretrieve(CMUDICT_URL, CMUDICT_FILE)
+    except Exception as e:
+        # Clean up partial download
+        if os.path.exists(CMUDICT_FILE):
+            os.remove(CMUDICT_FILE)
+        print(f"Error: Failed to download CMUdict: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"  Saved to {CMUDICT_FILE}", file=sys.stderr)
+    return CMUDICT_FILE
+
+
+def load_cmudict():
+    """Load CMUdict into a dict: word → list of phone-lists.
+
+    CMUdict format: word  PH1 PH2 PH3
+    Variants:       word(2)  PH1 PH2
+    """
+    path = ensure_cmudict()
+    entries = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith(";;;"):
+                continue
+            # Split on two-space separator (cmudict.dict format)
+            parts = line.split("  ", 1)
+            if len(parts) != 2:
+                # Try single-space split as fallback
+                parts = line.split(None, 1)
+                if len(parts) != 2:
+                    continue
+            word_raw, phones_str = parts[0], parts[1]
+            # Strip variant number: WORD(2) → WORD
+            word = re.sub(r"\(\d+\)$", "", word_raw).upper()
+            phones = phones_str.strip().split()
+            entries.setdefault(word, []).append(phones)
+    return entries
+
+
+def load_dict():
+    """Load config/main.dict into an ordered dict: word → translation."""
+    entries = {}
+    if not os.path.isfile(DICT_FILE):
+        return entries
+    with open(DICT_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            parts = line.split("\t", 1)
+            if len(parts) == 2:
+                entries[parts[0]] = parts[1]
+    return entries
+
+
+def save_dict(entries):
+    """Save entries to config/main.dict, sorted alphabetically."""
+    os.makedirs(os.path.dirname(DICT_FILE), exist_ok=True)
+    with open(DICT_FILE, "w", encoding="utf-8") as f:
+        for word in sorted(entries.keys(), key=str.lower):
+            f.write(f"{word}\t{entries[word]}\n")
+
+
+def cmd_add(args):
+    """Interactive add command."""
+    word = args.word.strip()
+    if not word:
+        print("Error: empty word", file=sys.stderr)
+        sys.exit(1)
+
+    # Check if already in dict
+    entries = load_dict()
+    if word in entries:
+        print(f'\n  "{word}" already in dictionary:')
+        print(f"    {word} → {entries[word]}")
+        try:
+            reply = input("\n  Overwrite? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Cancelled.")
+            return
+        if reply != "y":
+            print("  Cancelled.")
+            return
+
+    # Look up in CMUdict
+    cmudict = load_cmudict()
+    lookup = word.upper()
+    matches = cmudict.get(lookup, [])
+
+    if matches:
+        print(f'\n  CMUdict matches for "{word}":')
+        for i, phones in enumerate(matches, 1):
+            spr = arpabet_to_spr(phones)
+            arpabet_str = " ".join(phones)
+            print(f"    {i}) {arpabet_str}  →  {spr}")
+        print("    t) Type plain-text respelling")
+        print("    s) Type raw SPR")
+        print("    q) Cancel")
+        default = "1"
+    else:
+        print(f'\n  "{word}" not found in CMUdict.')
+        print("    t) Type plain-text respelling")
+        print("    s) Type raw SPR")
+        print("    q) Cancel")
+        default = "t"
+
+    try:
+        choice = input(f"\n  Choice [{default}]: ").strip() or default
+    except (EOFError, KeyboardInterrupt):
+        print("\n  Cancelled.")
+        return
+
+    if choice == "q":
+        print("  Cancelled.")
+        return
+
+    translation = None
+
+    if choice == "t":
+        try:
+            respelling = input("  Respelling: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Cancelled.")
+            return
+        if not respelling:
+            print("  Cancelled (empty input).")
+            return
+        translation = respelling
+
+    elif choice == "s":
+        try:
+            raw_spr = input("  SPR (e.g. `[k1Armxl]): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Cancelled.")
+            return
+        if not raw_spr:
+            print("  Cancelled (empty input).")
+            return
+        translation = raw_spr
+
+    elif matches:
+        try:
+            idx = int(choice) - 1
+        except ValueError:
+            print(f"  Invalid choice: {choice}")
+            return
+        if idx < 0 or idx >= len(matches):
+            print(f"  Invalid choice: {choice}")
+            return
+        translation = arpabet_to_spr(matches[idx])
+    else:
+        print(f"  Invalid choice: {choice}")
+        return
+
+    entries[word] = translation
+    save_dict(entries)
+    print(f"  Added: {word} → {translation}")
+
+
+def cmd_rm(args):
+    """Remove a word from the dictionary."""
+    word = args.word.strip()
+    entries = load_dict()
+    if word not in entries:
+        print(f'  "{word}" not in dictionary.')
+        return
+    del entries[word]
+    save_dict(entries)
+    print(f'  Removed: {word}')
+
+
+def cmd_list(args):
+    """List all dictionary entries."""
+    entries = load_dict()
+    if not entries:
+        print("  Dictionary is empty.")
+        return
+    for word in sorted(entries.keys(), key=str.lower):
+        print(f"  {word}\t{entries[word]}")
+
+
+def cmd_search(args):
+    """Search CMUdict for substring matches."""
+    pattern = args.pattern.strip().upper()
+    if not pattern:
+        print("Error: empty search pattern", file=sys.stderr)
+        sys.exit(1)
+
+    cmudict = load_cmudict()
+    matches = []
+    for word, phone_lists in sorted(cmudict.items()):
+        if pattern in word:
+            matches.append((word, phone_lists))
+
+    if not matches:
+        print(f'  No CMUdict entries matching "{args.pattern.strip()}".')
+        return
+
+    print(f'\n  CMUdict entries matching "{args.pattern.strip()}" ({len(matches)} results):')
+    limit = 50
+    for word, phone_lists in matches[:limit]:
+        for phones in phone_lists:
+            spr = arpabet_to_spr(phones)
+            arpabet_str = " ".join(phones)
+            print(f"    {word.lower():<20} {arpabet_str:<30} {spr}")
+    if len(matches) > limit:
+        print(f"    ... and {len(matches) - limit} more (refine your search)")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="vvdict",
+        description="Pronunciation dictionary tool for ViaVoice TTS",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    p_add = sub.add_parser("add", help="Add a pronunciation override")
+    p_add.add_argument("word", help="Word to add")
+
+    p_rm = sub.add_parser("rm", help="Remove an entry")
+    p_rm.add_argument("word", help="Word to remove")
+
+    sub.add_parser("list", help="Show all entries")
+
+    p_search = sub.add_parser("search", help="Search CMUdict")
+    p_search.add_argument("pattern", help="Substring to search for")
+
+    args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        sys.exit(1)
+
+    commands = {
+        "add": cmd_add,
+        "rm": cmd_rm,
+        "list": cmd_list,
+        "search": cmd_search,
+    }
+    commands[args.command](args)
+
+
+if __name__ == "__main__":
+    main()

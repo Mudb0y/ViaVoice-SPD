@@ -272,6 +272,11 @@ assemble_bundle() {
         cp "$VIAVOICE_ROOT/usr/include/eci.h" "$BUNDLE_DIR/usr/include/"
     fi
 
+    # Pronunciation dictionary
+    if [[ -f "$ROOT_DIR/config/main.dict" ]]; then
+        cp "$ROOT_DIR/config/main.dict" "$BUNDLE_DIR/etc/"
+    fi
+
     # Config and scripts from our repo
     cp "$ROOT_DIR/config/viavoice.conf" "$BUNDLE_DIR/etc/" || die "Failed to copy viavoice.conf"
     cp "$ROOT_DIR/bundle/install.sh"    "$BUNDLE_DIR/"     || die "Failed to copy install.sh"
