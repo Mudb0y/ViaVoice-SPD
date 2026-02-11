@@ -108,6 +108,7 @@ check_build_deps() {
 
     local missing=()
     gcc -m32 -x c -c -o /dev/null /dev/null 2>/dev/null || missing+=("gcc-multilib (gcc -m32)")
+    echo '#include <speechd_types.h>' | gcc -m32 -x c -c -o /dev/null - 2>/dev/null || missing+=("libspeechd-dev (speechd_types.h)")
     command -v curl   &>/dev/null || missing+=("curl")
     command -v rpm2cpio &>/dev/null || missing+=("rpm2cpio")
     command -v cpio   &>/dev/null || missing+=("cpio")
@@ -116,7 +117,7 @@ check_build_deps() {
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         die "Missing build dependencies: ${missing[*]}
-Install with: sudo apt install gcc-multilib curl rpm2cpio cpio binutils make"
+Install with: sudo apt install gcc-multilib libc6-dev-i386 libspeechd-dev curl rpm2cpio cpio binutils make"
     fi
     info "All build dependencies found"
 }

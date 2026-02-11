@@ -578,6 +578,7 @@ static char *strip_ssml(const char *text, size_t len)
     while (*start && (*start == ' ' || *start == '\n' || *start == '\t')) start++;
 
     j = strlen(result);
+    if (j == 0) return result;
     char *end = result + j - 1;
     while (end > start && (*end == ' ' || *end == '\n' || *end == '\t')) end--;
     *(end + 1) = '\0';
