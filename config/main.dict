@@ -10,6 +10,9 @@ at-spi	atspee
 BUSYBOX	busy box
 Busybox	busy box
 busybox	busy box
+CACHE	kash
+Cache	kash
+cache	kash
 COREUTILS	core utils
 Coreutils	core utils
 coreutils	core utils
@@ -46,8 +49,8 @@ Ffmpeg	f f m pehg
 ffmpeg	f f m pehg
 FILESYSTEM	file system
 Filesystem	file system
-Filesystems	file systems
 filesystem	file system
+Filesystems	file systems
 filesystems	file systems
 FONTCONFIG	font config
 Fontconfig	font config
@@ -85,10 +88,10 @@ PKGCONF	PKG conf
 Pkgconf	PKG conf
 pkgconf	PKG conf
 PLUGIN	pluh gihn
-PLUGINS	pluh gihnz
 Plugin	pluh gihn
-Plugins	pluh gihnz
 plugin	pluh gihn
+PLUGINS	pluh gihnz
+Plugins	pluh gihnz
 plugins	pluh gihnz
 STANDALONE	stand alone
 Standalone	stand alone
