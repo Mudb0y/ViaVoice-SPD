@@ -272,9 +272,12 @@ assemble_bundle() {
         cp "$VIAVOICE_ROOT/usr/include/eci.h" "$BUNDLE_DIR/usr/include/"
     fi
 
-    # Pronunciation dictionary
+    # Pronunciation dictionaries
     if [[ -f "$ROOT_DIR/config/main.dict" ]]; then
         cp "$ROOT_DIR/config/main.dict" "$BUNDLE_DIR/etc/"
+    fi
+    if [[ -f "$ROOT_DIR/config/root.dict" ]]; then
+        cp "$ROOT_DIR/config/root.dict" "$BUNDLE_DIR/etc/"
     fi
 
     # Config and scripts from our repo

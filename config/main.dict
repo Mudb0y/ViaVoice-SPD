@@ -1,5 +1,3 @@
-Acl	ACL
-acl	ACL
 acls	ACLs
 ADDUSER	add user
 Adduser	add user
@@ -15,14 +13,9 @@ busybox	busy box
 COREUTILS	core utils
 Coreutils	core utils
 coreutils	core utils
-Cpio	CPIO
-cpio	CPIO
 DEBCONF	deb conf
 Debconf	deb conf
 debconf	deb conf
-DEBIAN	dehbian
-Debian	dehbian
-debian	dehbian
 DEBUGEDIT	debug edit
 Debugedit	debug edit
 debugedit	debug edit
