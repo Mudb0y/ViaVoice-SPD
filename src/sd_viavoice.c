@@ -134,16 +134,11 @@ int module_config(const char *configfile)
         if (sscanf(p, "%63s %63s", key, value) == 2) {
             DBG("Config line: key='%s' value='%s'", key, value);
             if (strcasecmp(key, "ViaVoiceSampleRate") == 0) {
-                int rate = atoi(value);
-                DBG("Parsed sample rate: %d", rate);
-                if (rate == 8000) config_sample_rate = 0;
-                else if (rate == 11025) config_sample_rate = 1;
-                else if (rate == 22050) config_sample_rate = 2;
-                else {
-                    /* Accept raw codes 0, 1, 2 as well */
-                    if (rate >= 0 && rate <= 2) config_sample_rate = rate;
+                int v = atoi(value);
+                if (v >= 0 && v <= 2) {
+                    config_sample_rate = v;
+                    DBG("Config: sample rate %d", v);
                 }
-                DBG("Config: sample rate code %d", config_sample_rate);
             }
             else if (strcasecmp(key, "ViaVoiceDefaultVoice") == 0) {
                 int v = atoi(value);
