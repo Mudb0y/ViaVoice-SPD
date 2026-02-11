@@ -570,6 +570,17 @@ static char *sanitize_for_viavoice(const char *text)
                 c == ' ' || c == '\t' || c == '\n' ||
                 c == '.' || c == ',' || c == '!' || c == '?' ||
                 c == '$' || c == '\'') {
+                /* Split letter↔digit boundaries so ViaVoice reads
+                 * "libtest1" as "libtest 1" instead of spelling it */
+                int is_alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+                int is_digit = (c >= '0' && c <= '9');
+                if (dst > out && (is_alpha || is_digit)) {
+                    char prev = *(dst - 1);
+                    int prev_alpha = (prev >= 'A' && prev <= 'Z') || (prev >= 'a' && prev <= 'z');
+                    int prev_digit = (prev >= '0' && prev <= '9');
+                    if ((is_alpha && prev_digit) || (is_digit && prev_alpha))
+                        *dst++ = ' ';
+                }
                 *dst++ = c;
                 src++;
                 continue;
