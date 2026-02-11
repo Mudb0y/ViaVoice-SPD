@@ -75,6 +75,15 @@ VOWELS = {
 }
 
 
+def case_variants(word):
+    """Generate standard case variants: lowercase, UPPERCASE, Capitalized.
+
+    Returns a sorted list of unique variants (always includes original).
+    """
+    variants = {word, word.lower(), word.upper(), word.capitalize()}
+    return sorted(variants)
+
+
 def arpabet_to_respelling(phones):
     """Convert ARPABET phones to a rough English respelling.
 
@@ -184,11 +193,14 @@ def cmd_add(args):
         print("Error: empty word", file=sys.stderr)
         sys.exit(1)
 
-    # Check if already in dict
+    # Check if any case variant already in dict
     entries = load_dict()
-    if word in entries:
-        print(f'\n  "{word}" already in dictionary:')
-        print(f"    {word} → {entries[word]}")
+    variants = case_variants(word)
+    existing = [(v, entries[v]) for v in variants if v in entries]
+    if existing:
+        print(f'\n  Already in dictionary:')
+        for v, t in existing:
+            print(f"    {v} → {t}")
         try:
             reply = input("\n  Overwrite? [y/N]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
@@ -242,21 +254,28 @@ def cmd_add(args):
     else:
         translation = choice
 
-    entries[word] = translation
+    for v in variants:
+        entries[v] = translation
     save_dict(entries)
     print(f"  Added: {word} → {translation}")
+    others = [v for v in variants if v != word]
+    if others:
+        print(f"  Case variants: {', '.join(others)}")
 
 
 def cmd_rm(args):
-    """Remove a word from the dictionary."""
+    """Remove a word and all its case variants from the dictionary."""
     word = args.word.strip()
     entries = load_dict()
-    if word not in entries:
+    # Find all entries that match case-insensitively
+    to_remove = sorted(k for k in entries if k.lower() == word.lower())
+    if not to_remove:
         print(f'  "{word}" not in dictionary.')
         return
-    del entries[word]
+    for k in to_remove:
+        del entries[k]
     save_dict(entries)
-    print(f'  Removed: {word}')
+    print(f'  Removed: {", ".join(to_remove)}')
 
 
 def cmd_list(args):
