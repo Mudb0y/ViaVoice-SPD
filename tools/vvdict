@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """vvdict — Pronunciation dictionary tool for ViaVoice TTS.
 
-Manages config/main.dict using CMU Pronouncing Dictionary as a source,
-with automatic ARPABET→SPR phoneme conversion.
+Manages config/main.dict with plain-text respellings that ViaVoice reads
+instead of the original word.  Uses CMU Pronouncing Dictionary as a
+pronunciation reference.
 
 Usage:
     vvdict add <word>        Add a pronunciation override (interactive)
@@ -24,90 +25,84 @@ DICT_FILE = os.path.join(ROOT_DIR, "config", "main.dict")
 CMUDICT_FILE = os.path.join(ROOT_DIR, "data", "cmudict.txt")
 CMUDICT_URL = "https://raw.githubusercontent.com/cmusphinx/cmudict/master/cmudict.dict"
 
-# --- ARPABET → SPR mapping ---
-# Consonants and simple vowels (no stress distinction)
-ARPABET_TO_SPR = {
-    "AA": "a",   # father
-    "AE": "A",   # bat
-    "AO": "c",   # bought
-    "AW": "W",   # out
-    "AY": "Y",   # bite
+# --- ARPABET → readable respelling (rough approximation) ---
+ARPABET_RESPELLING = {
+    "AA": "ah",   # father
+    "AE": "a",    # bat
+    "AH": "uh",   # but / sofa (schwa)
+    "AO": "aw",   # bought
+    "AW": "ow",   # out
+    "AY": "eye",  # bite
     "B":  "b",
-    "CH": "C",   # church
+    "CH": "ch",
     "D":  "d",
-    "DH": "D",   # this
-    "EH": "E",   # bet
-    "ER": "R",   # bird
-    "EY": "e",   # bait
+    "DH": "th",   # this
+    "EH": "eh",   # bet
+    "ER": "er",   # bird
+    "EY": "ay",   # bait
     "F":  "f",
     "G":  "g",
     "HH": "h",
-    "IH": "I",   # bit
-    "IY": "i",   # beet
-    "JH": "J",   # judge
+    "IH": "ih",   # bit
+    "IY": "ee",   # beet
+    "JH": "j",
     "K":  "k",
     "L":  "l",
     "M":  "m",
     "N":  "n",
-    "NG": "G",   # sing
-    "OW": "o",   # boat
-    "OY": "O",   # boy
+    "NG": "ng",   # sing
+    "OW": "oh",   # boat
+    "OY": "oy",   # boy
     "P":  "p",
     "R":  "r",
     "S":  "s",
-    "SH": "S",   # ship
+    "SH": "sh",   # ship
     "T":  "t",
-    "TH": "T",   # thin
-    "UH": "U",   # book
-    "UW": "u",   # boot
+    "TH": "th",   # thin
+    "UH": "uu",   # book
+    "UW": "oo",   # boot
     "V":  "v",
     "W":  "w",
     "Y":  "y",
     "Z":  "z",
-    "ZH": "Z",   # measure
+    "ZH": "zh",   # measure
+}
+
+# Vowel phonemes (used for syllable grouping)
+VOWELS = {
+    "AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY",
+    "IH", "IY", "OW", "OY", "UH", "UW",
 }
 
 
-def arpabet_to_spr(phones):
-    """Convert a list of ARPABET phones (e.g. ['K', 'AE1', 'T']) to SPR string.
+def arpabet_to_respelling(phones):
+    """Convert ARPABET phones to a rough English respelling.
 
-    Stress digits (0/1/2) in ARPABET trail the vowel; in SPR they become a
-    leading digit before the vowel.  Special case: AH0 → 'x' (schwa),
-    AH1/AH2 → 'H' (strut vowel).
+    Groups consonants with the following vowel to form syllables,
+    separated by hyphens.  Purely a hint — users should tweak it.
     """
-    spr = []
+    syllables = []
+    current = []
     for phone in phones:
-        # Extract trailing stress digit if present
-        stress = ""
-        base = phone
-        if phone and phone[-1].isdigit():
-            stress = phone[-1]
-            base = phone[:-1]
-
-        # Special handling for AH (schwa vs strut)
-        if base == "AH":
-            if stress == "0":
-                spr.append("x")
-            else:
-                # Stressed AH → H, with stress prefix
-                if stress:
-                    spr.append(stress + "H")
-                else:
-                    spr.append("H")
-            continue
-
-        spr_phone = ARPABET_TO_SPR.get(base)
-        if spr_phone is None:
-            # Unknown phone — pass through as-is
-            spr.append(phone)
-            continue
-
-        if stress:
-            spr.append(stress + spr_phone)
-        else:
-            spr.append(spr_phone)
-
-    return "`[" + "".join(spr) + "]"
+        base = phone.rstrip("012")
+        part = ARPABET_RESPELLING.get(base, base.lower())
+        is_vowel = base in VOWELS
+        if is_vowel and current:
+            # Check if there are consonants to split: keep last consonant
+            # with this vowel (onset), rest stay with previous syllable
+            vowel_in_current = any(p[1] for p in current)
+            if vowel_in_current and len(current) >= 1:
+                # Split: move trailing consonants to new syllable
+                trail = []
+                while current and not current[-1][1]:
+                    trail.insert(0, current.pop())
+                if current:
+                    syllables.append("".join(p[0] for p in current))
+                current = trail
+        current.append((part, base in VOWELS))
+    if current:
+        syllables.append("".join(p[0] for p in current))
+    return " ".join(syllables)
 
 
 def ensure_cmudict():
@@ -209,69 +204,43 @@ def cmd_add(args):
     matches = cmudict.get(lookup, [])
 
     if matches:
-        print(f'\n  CMUdict matches for "{word}":')
+        print(f'\n  CMUdict pronunciations for "{word}":')
         for i, phones in enumerate(matches, 1):
-            spr = arpabet_to_spr(phones)
             arpabet_str = " ".join(phones)
-            print(f"    {i}) {arpabet_str}  →  {spr}")
-        print("    t) Type plain-text respelling")
-        print("    s) Type raw SPR")
-        print("    q) Cancel")
+            hint = arpabet_to_respelling(phones)
+            print(f"    {i}) {arpabet_str:<30} ≈ {hint}")
+        print()
+        print("  Enter a number to use that respelling, or type your own.")
+        print("  (q to cancel)")
         default = "1"
     else:
         print(f'\n  "{word}" not found in CMUdict.')
-        print("    t) Type plain-text respelling")
-        print("    s) Type raw SPR")
-        print("    q) Cancel")
-        default = "t"
+        print("  Type the respelling ViaVoice should say instead.")
+        print("  (q to cancel)")
+        default = None
 
     try:
-        choice = input(f"\n  Choice [{default}]: ").strip() or default
+        prompt = f"  Respelling [{default}]: " if default else "  Respelling: "
+        choice = input(prompt).strip()
+        if not choice and default:
+            choice = default
     except (EOFError, KeyboardInterrupt):
         print("\n  Cancelled.")
         return
 
-    if choice == "q":
+    if not choice or choice == "q":
         print("  Cancelled.")
         return
 
-    translation = None
-
-    if choice == "t":
-        try:
-            respelling = input("  Respelling: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n  Cancelled.")
-            return
-        if not respelling:
-            print("  Cancelled (empty input).")
-            return
-        translation = respelling
-
-    elif choice == "s":
-        try:
-            raw_spr = input("  SPR (e.g. `[k1Armxl]): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n  Cancelled.")
-            return
-        if not raw_spr:
-            print("  Cancelled (empty input).")
-            return
-        translation = raw_spr
-
-    elif matches:
-        try:
-            idx = int(choice) - 1
-        except ValueError:
-            print(f"  Invalid choice: {choice}")
-            return
+    # Check if it's a number selecting a CMUdict variant
+    if matches and choice.isdigit():
+        idx = int(choice) - 1
         if idx < 0 or idx >= len(matches):
             print(f"  Invalid choice: {choice}")
             return
-        translation = arpabet_to_spr(matches[idx])
+        translation = arpabet_to_respelling(matches[idx])
     else:
-        print(f"  Invalid choice: {choice}")
-        return
+        translation = choice
 
     entries[word] = translation
     save_dict(entries)
@@ -321,9 +290,9 @@ def cmd_search(args):
     limit = 50
     for word, phone_lists in matches[:limit]:
         for phones in phone_lists:
-            spr = arpabet_to_spr(phones)
             arpabet_str = " ".join(phones)
-            print(f"    {word.lower():<20} {arpabet_str:<30} {spr}")
+            hint = arpabet_to_respelling(phones)
+            print(f"    {word.lower():<20} {arpabet_str:<30} ≈ {hint}")
     if len(matches) > limit:
         print(f"    ... and {len(matches) - limit} more (refine your search)")
 

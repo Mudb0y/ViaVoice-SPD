@@ -284,11 +284,6 @@ int module_init(char **msg)
         return -1;
     }
     
-    /* Use plain text mode so ViaVoice handles punctuation naturally
-     * (inflection at commas, rising pitch at ?, finality at .) instead
-     * of reading punctuation characters aloud */
-    eciSetParam(eciHandle, eciInputType, 0);
-    
     /* Set sample rate from config (default 22050 Hz) */
     eciSetParam(eciHandle, eciSampleRate, config_sample_rate);
     
@@ -700,7 +695,7 @@ void module_speak_sync(const char *data, size_t bytes, SPDMessageType msgtype)
     }
 
     DBG("Speaking: %s", text);
-    
+
     /* Confirm we're ready */
     module_speak_ok();
     
