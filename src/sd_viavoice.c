@@ -45,6 +45,7 @@ static char config_abbrev_dict[256] = "";
 
 /* Global ECI parameters */
 static int config_phrase_prediction = 0;  /* 0 = disabled by default */
+static int config_dictionary = 0;         /* 0 = abbreviation dicts disabled by default */
 static int config_number_mode = -1;
 static int config_text_mode = -1;
 static int config_real_world_units = -1;
@@ -222,6 +223,13 @@ int module_config(const char *configfile)
                     DBG("Config: phrase prediction %d", v);
                 }
             }
+            else if (strcasecmp(key, "ViaVoiceDictionary") == 0) {
+                int v = atoi(value);
+                if (v >= 0 && v <= 1) {
+                    config_dictionary = v;
+                    DBG("Config: dictionary (abbreviations) %d", v);
+                }
+            }
             else if (strcasecmp(key, "ViaVoiceNumberMode") == 0) {
                 int v = atoi(value);
                 if (v >= 0) {
@@ -322,6 +330,12 @@ int module_init(char **msg)
     if (config_phrase_prediction >= 0) {
         eciSetParam(eciHandle, eciPhrasePrediction, config_phrase_prediction);
         DBG("Set phrase prediction: %d", config_phrase_prediction);
+    }
+    if (config_dictionary >= 0) {
+        /* ECI uses 0=enabled, 1=disabled; we invert for consistent config convention */
+        int eci_val = config_dictionary ? 0 : 1;
+        eciSetParam(eciHandle, eciDictionary, eci_val);
+        DBG("Set dictionary (abbreviations): config=%d eci=%d", config_dictionary, eci_val);
     }
     if (config_number_mode >= 0) {
         eciSetParam(eciHandle, eciNumberMode, config_number_mode);
