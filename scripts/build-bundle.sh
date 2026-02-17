@@ -9,8 +9,8 @@
 # 4. Builds the speech-dispatcher module
 # 5. Packages everything into a self-contained bundle
 #
-# NOTE: We do NOT bundle system libs (libc, pthread, etc.) - only ViaVoice-specific libs.
-# The module binary uses the target system's libc for compatibility.
+# NOTE: We bundle a minimal 32-bit runtime loader/libs so end users do not need
+# to install host multilib runtime packages just to run the module.
 #
 
 set -euo pipefail
@@ -35,6 +35,7 @@ DEPS_DIR="$ROOT_DIR/deps"
 BUILD_DIR="$ROOT_DIR/build"
 BUNDLE_DIR="$ROOT_DIR/dist/viavoice-bundle"
 VIAVOICE_ROOT="$DEPS_DIR/viavoice-root"
+RUNTIME_DIR="$BUNDLE_DIR/usr/lib/runtime"
 
 # --- Download URLs ---
 VIAVOICE_BASE_URL="https://archive.org/download/mandrake-7.2-power-pack/Mandrake%207.2%20PowerPack%20CD%2004%20of%2007.iso/IBM-ViaVoice-SDK%2Ftar"
@@ -46,6 +47,15 @@ LIBSTDCPP_URL="https://archive.debian.org/debian/pool/main/g/gcc-2.95/libstdc++2
 RTK_SHA256="2cd5069a24b409862a88c4a086fbe03147e9f307541f501ba96dd37d6f854651"
 SDK_SHA256="c03911146ee7faf0bd15fff05bed32516eeef2b2e79fe0a7d744aed002c4db9b"
 LIBSTDCPP_SHA256="236ed073aa04d4d704d1664eb4bfc2d32f0c47c30f6c0fc5c7d62a4a03fa7317"
+
+# --- 32-bit runtime libs to bundle ---
+RUNTIME_LIBS=(
+    libc.so.6
+    libm.so.6
+    libdl.so.2
+    libpthread.so.0
+    libgcc_s.so.1
+)
 
 # --- Argument parsing ---
 SKIP_VERIFY=false
@@ -107,17 +117,41 @@ check_build_deps() {
     step "Checking build dependencies..."
 
     local missing=()
-    gcc -m32 -x c -c -o /dev/null /dev/null 2>/dev/null || missing+=("gcc-multilib (gcc -m32)")
-    echo '#include <speechd_types.h>' | gcc -m32 -x c -c -o /dev/null - 2>/dev/null || missing+=("libspeechd-dev (speechd_types.h)")
+    local speechdCflags=""
+    if ! printf '#include <stdio.h>\nint main(void){return 0;}\n' | gcc -m32 -x c -c -o /dev/null - 2>/dev/null; then
+        missing+=("32-bit libc development headers (gnu/stubs-32.h)")
+    fi
+    command -v pkg-config &>/dev/null || missing+=("pkg-config")
+    if command -v pkg-config &>/dev/null; then
+        if pkg-config --exists speech-dispatcher; then
+            speechdCflags=$(pkg-config --cflags speech-dispatcher 2>/dev/null || true)
+            echo '#include <speechd_types.h>' | gcc -m32 -x c -c -o /dev/null - $speechdCflags 2>/dev/null \
+                || missing+=("speech-dispatcher headers (speechd_types.h)")
+        else
+            missing+=("speech-dispatcher pkg-config file (speech-dispatcher.pc)")
+        fi
+    fi
     command -v curl   &>/dev/null || missing+=("curl")
     command -v rpm2cpio &>/dev/null || missing+=("rpm2cpio")
     command -v cpio   &>/dev/null || missing+=("cpio")
     command -v ar     &>/dev/null || missing+=("binutils (ar)")
+    command -v file   &>/dev/null || missing+=("file")
     command -v make   &>/dev/null || missing+=("make")
 
     if [[ ${#missing[@]} -gt 0 ]]; then
+        local installHint=""
+        if command -v apt &>/dev/null; then
+            installHint="sudo apt install gcc-multilib libc6-dev-i386 libspeechd-dev pkg-config curl rpm2cpio cpio binutils file make"
+        elif command -v pacman &>/dev/null; then
+            installHint="sudo pacman -S gcc-multilib lib32-glibc speech-dispatcher pkgconf curl rpmextract cpio binutils file make"
+        elif command -v dnf &>/dev/null; then
+            installHint="sudo dnf install gcc glibc-devel.i686 speech-dispatcher-devel pkgconf-pkg-config curl rpm2cpio cpio binutils file make"
+        else
+            installHint="Install required toolchain + speech-dispatcher headers/pkg-config for your distro"
+        fi
         die "Missing build dependencies: ${missing[*]}
-Install with: sudo apt install gcc-multilib libc6-dev-i386 libspeechd-dev curl rpm2cpio cpio binutils make"
+Install with: $installHint
+Note: runtime no longer needs host multilib packages, but building from source still needs a 32-bit development toolchain."
     fi
     info "All build dependencies found"
 }
@@ -232,6 +266,157 @@ build_module() {
     info "Build successful"
 }
 
+# --- Locate 32-bit loader/libs on diverse distro layouts ---
+is_i386_elf() {
+    local candidatePath="$1"
+    [[ -f "$candidatePath" ]] || return 1
+    file -Lb "$candidatePath" | grep -qi 'ELF 32-bit'
+}
+
+resolve_from_gcc_print_file_name() {
+    local libraryName="$1"
+    local candidatePath=""
+
+    candidatePath=$(gcc -m32 -print-file-name="$libraryName" 2>/dev/null || true)
+    if [[ -n "$candidatePath" && "$candidatePath" != "$libraryName" ]] && is_i386_elf "$candidatePath"; then
+        echo "$candidatePath"
+        return 0
+    fi
+    return 1
+}
+
+resolve_from_ldconfig() {
+    local libraryName="$1"
+    local candidatePath=""
+
+    command -v ldconfig &>/dev/null || return 1
+    while IFS= read -r candidatePath; do
+        if is_i386_elf "$candidatePath"; then
+            echo "$candidatePath"
+            return 0
+        fi
+    done < <(ldconfig -p 2>/dev/null | awk -v libName="$libraryName" '$1 == libName && /=>/ {print $NF}')
+    return 1
+}
+
+resolve_from_fixed_dirs() {
+    local libraryName="$1"
+    shift
+    local dirPath=""
+    local candidatePath=""
+
+    for dirPath in "$@"; do
+        candidatePath="$dirPath/$libraryName"
+        if is_i386_elf "$candidatePath"; then
+            echo "$candidatePath"
+            return 0
+        fi
+    done
+    return 1
+}
+
+resolve_from_gcc_search_dirs() {
+    local libraryName="$1"
+    local libraryDirsLine=""
+    local dirPath=""
+    local candidatePath=""
+    local gccDirs=()
+
+    libraryDirsLine=$(gcc -m32 -print-search-dirs 2>/dev/null | sed -n 's/^libraries: =//p')
+    [[ -n "$libraryDirsLine" ]] || return 1
+
+    IFS=':' read -r -a gccDirs <<< "$libraryDirsLine"
+    for dirPath in "${gccDirs[@]}"; do
+        [[ -n "$dirPath" ]] || continue
+        candidatePath="$dirPath/$libraryName"
+        if is_i386_elf "$candidatePath"; then
+            echo "$candidatePath"
+            return 0
+        fi
+    done
+    return 1
+}
+
+resolve_from_find() {
+    local libraryName="$1"
+    local roots=(
+        /lib
+        /lib32
+        /usr/lib
+        /usr/lib32
+        /usr/local/lib
+        /usr/local/lib32
+    )
+    local rootPath=""
+    local candidatePath=""
+
+    for rootPath in "${roots[@]}"; do
+        [[ -d "$rootPath" ]] || continue
+        while IFS= read -r candidatePath; do
+            if is_i386_elf "$candidatePath"; then
+                echo "$candidatePath"
+                return 0
+            fi
+        done < <(find "$rootPath" -maxdepth 6 -type f -name "$libraryName" 2>/dev/null)
+    done
+    return 1
+}
+
+find_i386_loader() {
+    local loaderName="ld-linux.so.2"
+    local candidatePath=""
+
+    if candidatePath=$(resolve_from_gcc_print_file_name "$loaderName"); then
+        echo "$candidatePath"
+        return 0
+    fi
+    if candidatePath=$(resolve_from_fixed_dirs "$loaderName" \
+        /lib /lib32 /lib/i386-linux-gnu /lib/i686-linux-gnu \
+        /usr/lib32 /usr/lib/i386-linux-gnu /usr/lib/i686-linux-gnu); then
+        echo "$candidatePath"
+        return 0
+    fi
+    if candidatePath=$(resolve_from_ldconfig "$loaderName"); then
+        echo "$candidatePath"
+        return 0
+    fi
+    if candidatePath=$(resolve_from_find "$loaderName"); then
+        echo "$candidatePath"
+        return 0
+    fi
+    return 1
+}
+
+find_i386_lib() {
+    local libraryName="$1"
+    local candidatePath=""
+
+    if candidatePath=$(resolve_from_gcc_print_file_name "$libraryName"); then
+        echo "$candidatePath"
+        return 0
+    fi
+    if candidatePath=$(resolve_from_ldconfig "$libraryName"); then
+        echo "$candidatePath"
+        return 0
+    fi
+    if candidatePath=$(resolve_from_fixed_dirs "$libraryName" \
+        /lib/i386-linux-gnu /usr/lib/i386-linux-gnu \
+        /lib/i686-linux-gnu /usr/lib/i686-linux-gnu \
+        /lib32 /usr/lib32 /lib /usr/lib); then
+        echo "$candidatePath"
+        return 0
+    fi
+    if candidatePath=$(resolve_from_gcc_search_dirs "$libraryName"); then
+        echo "$candidatePath"
+        return 0
+    fi
+    if candidatePath=$(resolve_from_find "$libraryName"); then
+        echo "$candidatePath"
+        return 0
+    fi
+    return 1
+}
+
 # --- Assemble the bundle ---
 assemble_bundle() {
     step "Assembling bundle..."
@@ -239,6 +424,7 @@ assemble_bundle() {
     # Start fresh
     rm -rf "$BUNDLE_DIR"
     mkdir -p "$BUNDLE_DIR"/{usr/bin,usr/lib/ViaVoiceTTS,etc}
+    mkdir -p "$RUNTIME_DIR"
 
     # Module binary
     cp "$BUILD_DIR/sd_viavoice.bin" "$BUNDLE_DIR/usr/bin/" || die "Failed to copy sd_viavoice.bin"
@@ -254,6 +440,18 @@ assemble_bundle() {
         cp "$stdcpp" "$BUNDLE_DIR/usr/lib/" || die "Failed to copy $(basename "$stdcpp")"
     fi
     cp -a "$VIAVOICE_ROOT/usr/lib/libstdc++-libc6.1-1.so.2" "$BUNDLE_DIR/usr/lib/" || die "Failed to copy libstdc++ symlink"
+
+    # Minimal 32-bit runtime loader/libs so host multilib package install is not required
+    local loader_path
+    loader_path=$(find_i386_loader) || die "Could not find a 32-bit loader (ld-linux.so.2) on build host"
+    cp -L "$loader_path" "$RUNTIME_DIR/ld-linux.so.2" || die "Failed to copy $(basename "$loader_path")"
+    local runtime_lib=""
+    local runtime_path=""
+    for runtime_lib in "${RUNTIME_LIBS[@]}"; do
+        runtime_path=$(find_i386_lib "$runtime_lib") || die "Could not find 32-bit $runtime_lib on build host"
+        cp -L "$runtime_path" "$RUNTIME_DIR/$runtime_lib" || die "Failed to copy $runtime_lib"
+    done
+    info "Bundled 32-bit runtime loader/libs in $RUNTIME_DIR"
 
     # ViaVoice tools and data
     cp -r "$VIAVOICE_ROOT/usr/lib/ViaVoiceTTS/bin" "$BUNDLE_DIR/usr/lib/ViaVoiceTTS/" || die "Failed to copy ViaVoiceTTS/bin"
@@ -284,6 +482,7 @@ assemble_bundle() {
     cp "$ROOT_DIR/config/viavoice.conf" "$BUNDLE_DIR/etc/" || die "Failed to copy viavoice.conf"
     cp "$ROOT_DIR/bundle/install.sh"    "$BUNDLE_DIR/"     || die "Failed to copy install.sh"
     cp "$ROOT_DIR/bundle/uninstall.sh"  "$BUNDLE_DIR/"     || die "Failed to copy uninstall.sh"
+    cp "$ROOT_DIR/bundle/test-direct.sh" "$BUNDLE_DIR/"    || die "Failed to copy test-direct.sh"
     cp "$ROOT_DIR/bundle/sd_viavoice.in" "$BUNDLE_DIR/sd_viavoice" || die "Failed to copy sd_viavoice wrapper"
     if [[ -f "$ROOT_DIR/README.md" ]]; then
         cp "$ROOT_DIR/README.md" "$BUNDLE_DIR/"
@@ -308,6 +507,7 @@ ECIEOF
     # Set permissions
     chmod +x "$BUNDLE_DIR/install.sh"
     chmod +x "$BUNDLE_DIR/uninstall.sh"
+    chmod +x "$BUNDLE_DIR/test-direct.sh"
     chmod +x "$BUNDLE_DIR/sd_viavoice"
     chmod +x "$BUNDLE_DIR/usr/bin/sd_viavoice.bin"
     find "$BUNDLE_DIR/usr/lib/ViaVoiceTTS/bin/" -type f -exec chmod +x {} + 2>/dev/null || true
