@@ -579,6 +579,13 @@ static char *sanitize_for_viavoice(const char *text)
                 c == ' ' || c == '\t' || c == '\n' ||
                 c == '.' || c == ',' || c == '!' || c == '?' ||
                 c == '$' || c == '\'') {
+                /* Attach punctuation to preceding word so ViaVoice
+                 * treats it as inflection, not spoken punctuation.
+                 * e.g. "test , and" → "test, and" */
+                if (c == '.' || c == ',' || c == '!' || c == '?') {
+                    while (dst > out && (*(dst-1) == ' ' || *(dst-1) == '\t'))
+                        dst--;
+                }
                 /* Split letter↔digit boundaries so ViaVoice reads
                  * "libtest1" as "libtest 1" instead of spelling it */
                 int is_alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
