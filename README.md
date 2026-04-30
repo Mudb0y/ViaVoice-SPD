@@ -2,7 +2,7 @@
 
 A speech-dispatcher module for IBM ViaVoice TTS 5.1. This lets you use ViaVoice as a text-to-speech engine on modern Linux through speech-dispatcher.
 
-ViaVoice TTS is based on the same Eloquence synthesis technology that IBM and ETI developed in the 90s. Version 5.1 was freely distributed by IBM and is now archived on archive.org. It sounds significantly more natural than eSpeak NG for extended listening.
+ViaVoice TTS is based on the same Eloquence synthesis technology that IBM and ETI developed in the 90s. Version 5.1 was freely distributed by IBM on their website around 1999 - 2000. It was also distributed on the Mandrake Linux 7.2 Powerpack CDs, which is the source for our SDK and RTK versions, the bundle builder fetches them directly off of archive.org.
 
 ## Install
 
@@ -33,8 +33,6 @@ Test it:
 
 ```bash
 spd-say -o viavoice "Hello, this is ViaVoice."
-spd-say -o viavoice -y Flo "Hi, I'm Flo!"
-spd-say -o viavoice -L   # list voices
 ```
 
 ## Uninstall
@@ -47,51 +45,9 @@ sudo ./uninstall.sh
 ./uninstall.sh --prefix=/path/to/install
 ```
 
-## Voices
-
-ViaVoice 5.1 ships with 8 English voices:
-
-| Voice | Name |
-|-------|------|
-| 0 | Wade (adult male, default) |
-| 1 | Flo (adult female) |
-| 2 | Bobbie (child) |
-| 3 | Male 2 |
-| 4 | Male 3 |
-| 5 | Female 2 |
-| 6 | Grandma (elderly female) |
-| 7 | Grandpa (elderly male) |
-
-Select by name: `spd-say -o viavoice -y Grandpa "Back in my day..."`
-
 ## Configuration
 
 The config file lives at `<install-path>/etc/viavoice.conf` and is also copied to speech-dispatcher's module config directory during install. All settings are optional. The defaults work fine.
-
-```conf
-# Sample rate: 8000, 11025, or 22050 (default: 22050)
-ViaVoiceSampleRate 22050
-
-# Default voice (0-7, see table above)
-ViaVoiceDefaultVoice 0
-
-# Voice parameters (applied to all voices)
-ViaVoicePitchBaseline 65     # 0-100
-ViaVoicePitchFluctuation 30  # 0-100, higher = more expressive
-ViaVoiceSpeed 50             # 0-250
-ViaVoiceVolume 90            # 0-100
-ViaVoiceHeadSize 50          # 0-100, affects resonance
-ViaVoiceRoughness 0          # 0-100, voice gravel
-ViaVoiceBreathiness 0        # 0-100, airy quality
-
-# Phrase prediction (0=off, 1=on, default: off)
-ViaVoicePhrasePrediction 0
-
-# Custom dictionaries
-ViaVoiceMainDict /path/to/main.dct
-ViaVoiceRootDict /path/to/root.dct
-ViaVoiceAbbrevDict /path/to/abbrev.dct
-```
 
 ## Building from source
 
