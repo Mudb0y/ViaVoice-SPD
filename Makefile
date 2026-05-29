@@ -15,7 +15,8 @@ VIAVOICE_LIB = deps/viavoice/lib
 VIAVOICE_LIBS = -l:libibmeci50.so
 
 # Include paths
-INCLUDES = -I$(SRCDIR) -I/usr/include/speech-dispatcher
+SPEECHD_CFLAGS := $(shell pkg-config --cflags speech-dispatcher 2>/dev/null)
+INCLUDES = -I$(SRCDIR) $(SPEECHD_CFLAGS)
 
 # Libraries - ONLY link against ViaVoice lib, use system's 32-bit pthread/libc
 # The bundled Debian libs are for runtime only, not link time

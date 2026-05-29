@@ -3,7 +3,7 @@
 # ViaVoice TTS Bundle Installer
 #
 # Installs the ViaVoice TTS module for speech-dispatcher.
-# Requires: speech-dispatcher, 32-bit lib support (libc6:i386 on Debian/Ubuntu)
+# Requires: speech-dispatcher
 #
 
 set -euo pipefail
@@ -67,31 +67,11 @@ if [[ ! -f "$SCRIPT_DIR/usr/bin/sd_viavoice.bin" ]]; then
     die "This script must be run from the bundle directory (usr/bin/sd_viavoice.bin not found)"
 fi
 
-# Check for 32-bit support
-check_32bit_support() {
-    local candidates=(
-        /lib/ld-linux.so.2
-        /lib32/ld-linux.so.2
-        /lib/i386-linux-gnu/ld-linux.so.2
-    )
-    for ld in "${candidates[@]}"; do
-        [[ -f "$ld" ]] && return 0
-    done
-    return 1
-}
-
-if ! check_32bit_support; then
-    warn "32-bit support may not be installed"
-    # Detect package manager and give targeted advice
-    if command -v apt &>/dev/null; then
-        echo "  Fix: sudo dpkg --add-architecture i386 && sudo apt install libc6:i386" >&2
-    elif command -v pacman &>/dev/null; then
-        echo "  Fix: sudo pacman -S lib32-glibc" >&2
-    elif command -v dnf &>/dev/null; then
-        echo "  Fix: sudo dnf install glibc.i686" >&2
-    else
-        echo "  Install 32-bit libc for your distribution" >&2
-    fi
+# Check bundled runtime presence
+if [[ -x "$SCRIPT_DIR/usr/lib/runtime/ld-linux.so.2" ]]; then
+    info "Bundled 32-bit runtime detected (host multilib package install not required)"
+else
+    warn "Bundled 32-bit runtime not found, host 32-bit runtime may be required"
     echo "" >&2
 fi
 
@@ -221,6 +201,7 @@ fi
 # --- Step 3: Set permissions ---
 step "Setting permissions..."
 chmod +x "$INSTALL_PATH/sd_viavoice" || die "Failed to set permissions on sd_viavoice"
+[[ -f "$INSTALL_PATH/test-direct.sh" ]] && chmod +x "$INSTALL_PATH/test-direct.sh"
 chmod +x "$INSTALL_PATH/usr/bin/sd_viavoice.bin" || die "Failed to set permissions on sd_viavoice.bin"
 # ViaVoice tools (inigen etc.) - best effort
 find "$INSTALL_PATH/usr/lib/ViaVoiceTTS/bin/" -type f -exec chmod +x {} + 2>/dev/null || true
@@ -263,24 +244,26 @@ fi
 # --- Step 7: Verify installation ---
 step "Verifying installation..."
 
-LIB_DIR="$INSTALL_PATH/usr/lib"
-BIN="$INSTALL_PATH/usr/bin/sd_viavoice.bin"
+libDir="$INSTALL_PATH/usr/lib"
+runtimeDir="$libDir/runtime"
+moduleBin="$INSTALL_PATH/usr/bin/sd_viavoice.bin"
 
-missing=$(LD_LIBRARY_PATH="$LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$BIN" 2>&1 | grep "not found" || true)
-if [[ -n "$missing" ]]; then
-    warn "Some libraries are missing:"
-    echo "$missing" >&2
-    echo "" >&2
-    if command -v apt &>/dev/null; then
-        echo "  Try: sudo dpkg --add-architecture i386 && sudo apt install libc6:i386" >&2
-    elif command -v pacman &>/dev/null; then
-        echo "  Try: sudo pacman -S lib32-glibc" >&2
-    elif command -v dnf &>/dev/null; then
-        echo "  Try: sudo dnf install glibc.i686" >&2
+if [[ -x "$runtimeDir/ld-linux.so.2" ]]; then
+    if "$runtimeDir/ld-linux.so.2" --library-path "$runtimeDir:$libDir" --verify "$moduleBin" >/dev/null 2>&1; then
+        info "Bundled loader/runtime can run sd_viavoice.bin"
+    else
+        warn "Bundled loader/runtime verification failed for sd_viavoice.bin"
     fi
 else
-    info "All library dependencies satisfied"
+    missing=$(LD_LIBRARY_PATH="$libDir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$moduleBin" 2>&1 | grep "not found" || true)
+    if [[ -n "$missing" ]]; then
+        warn "Some libraries are missing:"
+        echo "$missing" >&2
+    else
+        info "All library dependencies satisfied"
+    fi
 fi
 
 echo ""
 info "Installation complete!"
+echo "  Direct test (no speech-dispatcher): $INSTALL_PATH/test-direct.sh \"Hello from ViaVoice\""

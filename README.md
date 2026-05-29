@@ -6,7 +6,8 @@ ViaVoice TTS is based on the same Eloquence synthesis technology that IBM and ET
 
 ## Install
 
-Requires: speech-dispatcher, 32-bit libc support (the ViaVoice engine is a 32-bit i386 binary from 2000).
+Requires: speech-dispatcher. The bundle ships its own 32-bit runtime loader/libs.
+Your kernel still must support running i386 binaries.
 
 Download the latest release tarball, extract it, and run the installer:
 
@@ -23,16 +24,22 @@ sudo ./install.sh
 
 The installer accepts `--yes` to skip the confirmation prompt and `--prefix=PATH` for a custom location.
 
-If you don't have 32-bit support installed, on Debian/Ubuntu:
-
-```bash
-sudo dpkg --add-architecture i386 && sudo apt install libc6:i386
-```
-
 Test it:
 
 ```bash
 spd-say -o viavoice "Hello, this is ViaVoice."
+```
+
+Direct isolated test (no speech-dispatcher):
+
+```bash
+./test-direct.sh "Hello from direct ViaVoice"
+```
+
+Audible isolated test via temporary speech-dispatcher (does not modify your running setup):
+
+```bash
+./scripts/test-isolated.sh "Hello from isolated ViaVoice"
 ```
 
 ## Uninstall
@@ -54,7 +61,7 @@ The config file lives at `<install-path>/etc/viavoice.conf` and is also copied t
 Build dependencies (Debian/Ubuntu):
 
 ```bash
-sudo apt install gcc-multilib libc6-dev-i386 libspeechd-dev curl rpm2cpio cpio binutils make
+sudo apt install gcc-multilib libc6-dev-i386 libspeechd-dev curl rpm2cpio cpio binutils file make
 ```
 
 Build:
@@ -64,6 +71,8 @@ Build:
 ```
 
 This downloads the ViaVoice RTK/SDK from archive.org, extracts them, downloads the ancient libstdc++ that ViaVoice needs, compiles the speech-dispatcher module as a 32-bit binary, and packages everything into `dist/viavoice-tts-bundle.tar.gz`.
+
+Note: using the built bundle at runtime does not require host multilib packages, but building from source still requires a 32-bit development toolchain.
 
 All downloads are verified against embedded SHA256 checksums. Pass `--skip-verify` to bypass this during development.
 
@@ -82,9 +91,10 @@ SPD modules are standalone executables that communicate with the SPD server over
 SPD launches `sd_viavoice`, which is a bash wrapper script (`bundle/sd_viavoice.in`). It resolves its own path (following symlinks), then sets up the environment:
 
 - `ECIINI` -- points to `eci.ini`, the ViaVoice voice configuration file
-- `LD_LIBRARY_PATH` -- prepends the bundle's `usr/lib/` so the linker finds `libibmeci50.so` and the ancient `libstdc++-libc6.1-1.so.2`
+- `LD_LIBRARY_PATH` -- prepends the bundle's `usr/lib/runtime/` and `usr/lib/`
 - `LD_PRELOAD` -- preloads `enu50.so` (the English voice data) to work around a loading issue in ViaVoice
 
+If present, it launches the module through bundled `ld-linux.so.2` from `usr/lib/runtime/`, so host multilib packages are not required.
 It then `exec`s the actual binary `sd_viavoice.bin`.
 
 ### The module binary
@@ -131,10 +141,12 @@ The tarball contains everything ViaVoice needs to run:
 - `libibmeci50.so` -- the ViaVoice ECI engine
 - `enu50.so` -- English voice data
 - `libstdc++-libc6.1-1.so.2` -- ancient libstdc++ from gcc 2.95 that ViaVoice was linked against
+- `usr/lib/runtime/ld-linux.so.2` and core 32-bit glibc libs (`libc`, `libm`, `libdl`, `libpthread`, `libgcc_s`)
 - `ViaVoiceTTS/bin/` -- IBM SDK tools (inigen, vieweci, showmsg)
 - `ViaVoiceTTS/eci.ini` -- voice configuration (paths are fixed up by the installer)
+- `test-direct.sh` -- direct engine smoke test without speech-dispatcher
 
-The only thing the host system needs to provide is 32-bit libc (`libc6:i386` on Debian) and speech-dispatcher.
+The host system needs speech-dispatcher and an x86 kernel with IA32 emulation enabled.
 
 ### Why not IBMTTS 6.7 / Voxin?
 
